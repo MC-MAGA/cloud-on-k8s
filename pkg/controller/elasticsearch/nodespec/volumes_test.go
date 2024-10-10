@@ -44,7 +44,7 @@ func Test_BuildVolumes_DataVolumeMountPath(t *testing.T) {
 						AccessModes: []corev1.PersistentVolumeAccessMode{
 							corev1.ReadWriteOnce,
 						},
-						Resources: corev1.ResourceRequirements{
+						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceStorage: resource.MustParse("42Ti"),
 							},
@@ -90,7 +90,7 @@ func Test_BuildVolumes_DataVolumeMountPath(t *testing.T) {
 
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
-			_, volumeMounts := buildVolumes("esname", version.MustParse("8.8.0"), tc.nodeSpec, nil, volume.DownwardAPI{})
+			_, volumeMounts := buildVolumes("esname", version.MustParse("8.8.0"), tc.nodeSpec, nil, volume.DownwardAPI{}, []volume.VolumeLike{})
 			assert.True(t, contains(volumeMounts, "elasticsearch-data", "/usr/share/elasticsearch/data"))
 		})
 	}

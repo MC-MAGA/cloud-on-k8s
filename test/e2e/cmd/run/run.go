@@ -180,6 +180,7 @@ func (h *helper) initTestContext() error {
 		KubernetesVersion:     getKubernetesVersion(h),
 		IgnoreWebhookFailures: h.ignoreWebhookFailures,
 		OcpCluster:            isOcpCluster(h),
+		AksCluster:            isAKSCluster(h),
 		DeployChaosJob:        h.deployChaosJob,
 		TestEnvTags:           h.testEnvTags,
 		E2ETags:               h.e2eTags,
@@ -240,12 +241,13 @@ func isOcpCluster(h *helper) bool {
 	return err == nil
 }
 
-// isAutopilotCluster will detect whether we are running within an autopilot cluster
-// by using the `remotenodes` resource, which only seems to exist on autopilot clusters
-// not standard GKE clusters.
+func isAKSCluster(h *helper) bool {
+	return strings.HasPrefix(h.provider, "aks")
+}
+
+// isAutopilotCluster convenience function to check the provider value for the string gke-autopilot.
 func isAutopilotCluster(h *helper) bool {
-	_, _, err := h.kubectl("get", "remotenodes")
-	return err == nil
+	return strings.HasPrefix(h.provider, "gke-autopilot")
 }
 
 func (h *helper) initTestSecrets() error {
@@ -294,7 +296,7 @@ func (h *helper) initTestSecrets() error {
 			MonitoringURL  string `json:"monitoring_url"`
 			MonitoringUser string `json:"monitoring_user"`
 			MonitoringPass string `json:"monitoring_pass"`
-			APMSecretToken string `json:"apm_secret_token"`
+			APMApiKey      string `json:"apm_api_key"`
 			APMServerURL   string `json:"apm_server_url"`
 		}{}
 
@@ -308,7 +310,7 @@ func (h *helper) initTestSecrets() error {
 		h.testSecrets["password"] = monitoringSecrets.MonitoringPass
 
 		h.operatorSecrets = map[string]string{}
-		h.operatorSecrets["apm_secret_token"] = monitoringSecrets.APMSecretToken
+		h.operatorSecrets["apm_api_key"] = monitoringSecrets.APMApiKey
 		h.operatorSecrets["apm_server_url"] = monitoringSecrets.APMServerURL
 	}
 

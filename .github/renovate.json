@@ -1,41 +1,22 @@
 {
   "extends": [
-    "config:base"
+    "config:recommended"
   ],
-  "labels": [">renovate"],
+  "labels": [
+    ">renovate"
+  ],
+  "schedule": [
+    "after 1am on monday"
+  ],
   "packageRules": [
     {
-      "packageNames": [
-        "k8s.io/apimachinery",
-        "k8s.io/client-go",
-        "k8s.io/api",
-        "k8s.io/cli-runtime",
-        "k8s.io/apiextensions-apiserver",
-        "k8s.io/kubectl"
-      ],
-      "updateTypes": [
-        "major",
-        "minor",
-        "digest"
-      ],
-      "enabled": false
-    },
-    {
-      "packageNames": [
-        "k8s.io/apimachinery",
-        "k8s.io/client-go",
-        "k8s.io/api",
-        "k8s.io/cli-runtime",
-        "k8s.io/apiextensions-apiserver",
-        "k8s.io/kubectl"
-      ],
-      "updateTypes": [
-        "patch"
+      "matchPackagePatterns": [
+        "k8s.io"
       ],
       "groupName": "k8s"
     },
     {
-      "packageNames": [
+      "matchPackageNames": [
         "k8s.io/utils",
         "golang.org/x/crypto",
         "golang.org/x/net",
@@ -43,13 +24,20 @@
         "golang.org/x/oauth2",
         "github.com/elastic/cloud-on-k8s/v2"
       ],
-      "updateTypes": [
+      "matchUpdateTypes": [
         "digest"
       ],
       "enabled": false
+    },
+    {
+      "description": "The definition in the design document for a Docker image a) isn't a valid Docker image, and b) shouldn't be kept up-to-date even if so, as design docs should be a point-in-time reference",
+      "matchPackageNames": [
+        "docker.elastic.co/k8s-operators"
+      ],
+      "matchFileNames": [
+        "docs/design/0005-configurable-operator.md"
+      ],
+      "enabled": false
     }
-  ],
-  "ignorePaths": [
-    "**/vendor/**"
   ]
 }

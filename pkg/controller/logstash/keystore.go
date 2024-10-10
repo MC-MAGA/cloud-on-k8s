@@ -12,6 +12,8 @@ import (
 
 	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/pod"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash/labels"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash/volume"
 )
 
@@ -20,10 +22,53 @@ const (
 )
 
 var (
-	keystoreCommand          = "echo 'y' | /usr/share/logstash/bin/logstash-keystore"
+	// containerCommand runs in every pod creation to regenerate keystore.
+	// `logstash-keystore` allows for adding multiple keys in a single operation.
+	// All keys and values must be ASCII and non-empty string. Values are input via stdin, delimited by \n.
+	containerCommand = `#!/usr/bin/env bash
+
+set -eu
+
+{{ if not .SkipInitializedFlag -}}
+keystore_initialized_flag={{ .KeystoreVolumePath }}/elastic-internal-init-keystore.ok
+
+if [[ -f "${keystore_initialized_flag}" ]]; then
+    echo "Keystore already initialized."
+	exit 0
+fi
+
+{{ end -}}
+echo "Initializing keystore."
+
+# create a keystore in the default data path
+{{ .KeystoreCreateCommand }}
+
+# add all existing secret entries to keys (Array), vals (String). 
+for filename in  {{ .SecureSettingsVolumeMountPath }}/*; do
+	[[ -e "$filename" ]] || continue # glob does not match
+	key=$(basename "$filename")
+	keys+=("$key")
+	vals+=$(cat "$filename")
+	vals+="\n"
+done
+
+# remove the trailing '\n' from the end of the vals
+vals=${vals%'\n'}
+
+# add multiple keys to keystore
+{{ .KeystoreAddCommand }}
+
+{{ if not .SkipInitializedFlag -}}
+touch {{ .KeystoreVolumePath }}/elastic-internal-init-keystore.ok
+{{ end -}}
+
+echo "Keystore initialization successful."
+`
+
 	initContainersParameters = keystore.InitContainerParameters{
-		KeystoreCreateCommand:         keystoreCommand + " create",
-		KeystoreAddCommand:            keystoreCommand + ` add "$key" --stdin < "$filename"`,
+		KeystoreCreateCommand:         "echo 'y' | /usr/share/logstash/bin/logstash-keystore create",
+		KeystoreAddCommand:            `echo -e "$vals" | /usr/share/logstash/bin/logstash-keystore add "${keys[@]}"`,
+		CustomScript:                  containerCommand,
 		SecureSettingsVolumeMountPath: keystore.SecureSettingsVolumeMountPath,
 		KeystoreVolumePath:            volume.ConfigMountPath,
 		Resources: corev1.ResourceRequirements{
@@ -45,12 +90,12 @@ func reconcileKeystore(params Params, configHash hash.Hash) (*keystore.Resources
 		params,
 		&params.Logstash,
 		logstashv1alpha1.Namer,
-		NewLabels(params.Logstash),
+		labels.NewLabels(params.Logstash),
 		initContainersParameters,
 	); err != nil {
 		return nil, err
 	} else if keystoreResources != nil {
-		_, _ = configHash.Write([]byte(keystoreResources.Version))
+		_, _ = configHash.Write([]byte(keystoreResources.Hash))
 		// set keystore password in init container
 		if env := getKeystorePass(params.Logstash); env != nil {
 			keystoreResources.InitContainer.Env = append(keystoreResources.InitContainer.Env, *env)
@@ -64,15 +109,12 @@ func reconcileKeystore(params Params, configHash hash.Hash) (*keystore.Resources
 
 // getKeystorePass return env LOGSTASH_KEYSTORE_PASS from main container if set
 func getKeystorePass(logstash logstashv1alpha1.Logstash) *corev1.EnvVar {
-	for _, c := range logstash.Spec.PodTemplate.Spec.Containers {
-		if c.Name == logstashv1alpha1.LogstashContainerName {
-			for _, env := range c.Env {
-				if env.Name == KeystorePassKey {
-					return &env
-				}
+	if c := pod.ContainerByName(logstash.Spec.PodTemplate.Spec, logstashv1alpha1.LogstashContainerName); c != nil {
+		for _, env := range c.Env {
+			if env.Name == KeystorePassKey {
+				return &env
 			}
 		}
 	}
-
 	return nil
 }

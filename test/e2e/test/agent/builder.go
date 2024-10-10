@@ -10,12 +10,14 @@ import (
 
 	ghodssyaml "github.com/ghodss/yaml"
 	"github.com/stretchr/testify/require"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/agent/v1alpha1"
@@ -52,6 +54,23 @@ type Builder struct {
 	Suffix string
 }
 
+func (b Builder) WithResources(resources corev1.ResourceRequirements) Builder {
+	containerIdx := getContainerIndex(agent.ContainerName, b.PodTemplate.Spec.Containers)
+	if containerIdx < 0 {
+		b.PodTemplate.Spec.Containers = append(
+			b.PodTemplate.Spec.Containers,
+			corev1.Container{
+				Name:      agent.ContainerName,
+				Resources: resources,
+			},
+		)
+		return b
+	}
+
+	b.PodTemplate.Spec.Containers[containerIdx].Resources = resources
+	return b
+}
+
 func (b Builder) SkipTest() bool {
 	ver := version.MustParse(b.Agent.Spec.Version)
 	supportedVersions := version.SupportedAgentVersions
@@ -76,10 +95,14 @@ func (b Builder) SkipTest() bool {
 // appropriately.
 func NewBuilderFromAgent(agent *agentv1alpha1.Agent) Builder {
 	var podTemplate *corev1.PodTemplateSpec
-	if agent.Spec.DaemonSet != nil {
+
+	switch {
+	case agent.Spec.DaemonSet != nil:
 		podTemplate = &agent.Spec.DaemonSet.PodTemplate
-	} else if agent.Spec.Deployment != nil {
+	case agent.Spec.Deployment != nil:
 		podTemplate = &agent.Spec.Deployment.PodTemplate
+	case agent.Spec.StatefulSet != nil:
+		podTemplate = &agent.Spec.StatefulSet.PodTemplate
 	}
 
 	return Builder{
@@ -96,7 +119,7 @@ func NewBuilder(name string) Builder {
 		Labels:    map[string]string{run.TestNameLabel: name},
 	}
 
-	return Builder{
+	builder := Builder{
 		Agent: agentv1alpha1.Agent{
 			ObjectMeta: meta,
 			Spec: agentv1alpha1.AgentSpec{
@@ -108,6 +131,63 @@ func NewBuilder(name string) Builder {
 		WithSuffix(suffix).
 		WithLabel(run.TestNameLabel, name).
 		WithDaemonSet()
+
+	if test.Ctx().OcpCluster || test.Ctx().AksCluster {
+		// Agent requires more resources on OpenShift, and AKS clusters. One hypothesis is that
+		// there are more resources deployed on OpenShift than on other K8s clusters
+		// used for E2E tests.
+		// Relates to https://github.com/elastic/cloud-on-k8s/pull/7789
+		// Should be reverted once https://github.com/elastic/elastic-agent/issues/4730 is addressed
+		builder = builder.WithResources(
+			corev1.ResourceRequirements{
+				Limits: map[corev1.ResourceName]resource.Quantity{
+					corev1.ResourceMemory: resource.MustParse("1Gi"),
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+				},
+				Requests: map[corev1.ResourceName]resource.Quantity{
+					corev1.ResourceMemory: resource.MustParse("1Gi"),
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+				},
+			},
+		)
+		return builder
+	}
+
+	builder = builder.MoreResourcesForIssue4730()
+	return builder
+}
+
+// MoreResourcesForIssue4730 adjusts Agent resource requirements to deal with https://github.com/elastic/elastic-agent/issues/4730.
+func (b Builder) MoreResourcesForIssue4730() Builder {
+	if test.Ctx().OcpCluster || test.Ctx().AksCluster {
+		// Agent requires even more resources on OpenShift, and AKS clusters. One hypothesis is that
+		// there are more resources deployed on these clusters than on other K8s clusters used for E2E tests.
+		return b.WithResources(
+			corev1.ResourceRequirements{
+				Limits: map[corev1.ResourceName]resource.Quantity{
+					corev1.ResourceMemory: resource.MustParse("1Gi"),
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+				},
+				Requests: map[corev1.ResourceName]resource.Quantity{
+					corev1.ResourceMemory: resource.MustParse("1Gi"),
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+				},
+			},
+		)
+	}
+	// also increase memory a bit for other k8s distributions
+	return b.WithResources(
+		corev1.ResourceRequirements{
+			Limits: map[corev1.ResourceName]resource.Quantity{
+				corev1.ResourceMemory: resource.MustParse("640Mi"),
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+			},
+			Requests: map[corev1.ResourceName]resource.Quantity{
+				corev1.ResourceMemory: resource.MustParse("640Mi"),
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+			},
+		},
+	)
 }
 
 type ValidationFunc func(client.Client) error
@@ -125,10 +205,14 @@ func (b Builder) WithMutatedFrom(builder *Builder) Builder {
 func (b Builder) WithDaemonSet() Builder {
 	b.Agent.Spec.DaemonSet = &agentv1alpha1.DaemonSetSpec{}
 
-	// if it exists, move PodTemplate from Deployment to DaemonSet
-	if b.Agent.Spec.Deployment != nil {
+	// if other types exist, move PodTemplate from them to DaemonSet
+	switch {
+	case b.Agent.Spec.Deployment != nil:
 		b.Agent.Spec.DaemonSet.PodTemplate = b.Agent.Spec.Deployment.PodTemplate
 		b.Agent.Spec.Deployment = nil
+	case b.Agent.Spec.StatefulSet != nil:
+		b.Agent.Spec.DaemonSet.PodTemplate = b.Agent.Spec.StatefulSet.PodTemplate
+		b.Agent.Spec.StatefulSet = nil
 	}
 
 	b.PodTemplate = &b.Agent.Spec.DaemonSet.PodTemplate
@@ -139,10 +223,14 @@ func (b Builder) WithDaemonSet() Builder {
 func (b Builder) WithDeployment() Builder {
 	b.Agent.Spec.Deployment = &agentv1alpha1.DeploymentSpec{}
 
-	// if it exists, move PodTemplate from DaemonSet to Deployment
-	if b.Agent.Spec.DaemonSet != nil {
+	// if other types exist, move PodTemplate from them to Deployment
+	switch {
+	case b.Agent.Spec.DaemonSet != nil:
 		b.Agent.Spec.Deployment.PodTemplate = b.Agent.Spec.DaemonSet.PodTemplate
 		b.Agent.Spec.DaemonSet = nil
+	case b.Agent.Spec.StatefulSet != nil:
+		b.Agent.Spec.Deployment.PodTemplate = b.Agent.Spec.StatefulSet.PodTemplate
+		b.Agent.Spec.StatefulSet = nil
 	}
 	b.PodTemplate = &b.Agent.Spec.Deployment.PodTemplate
 
@@ -166,6 +254,23 @@ func (b Builder) WithESValidation(validation ValidationFunc, outputName string) 
 	b.Validations = append(b.Validations, validation)
 	b.ValidationsOutputs = append(b.ValidationsOutputs, outputName)
 
+	return b
+}
+
+func (b Builder) WithFleetAgentDataStreamsValidation() Builder {
+	v := version.MustParse(test.Ctx().ElasticStackVersion)
+	b = b.
+		WithDefaultESValidation(HasWorkingDataStream(LogsType, "elastic_agent", "default")).
+		WithDefaultESValidation(HasWorkingDataStream(LogsType, "elastic_agent.filebeat", "default")).
+		WithDefaultESValidation(HasWorkingDataStream(LogsType, "elastic_agent.fleet_server", "default")).
+		WithDefaultESValidation(HasWorkingDataStream(LogsType, "elastic_agent.metricbeat", "default")).
+		WithDefaultESValidation(HasWorkingDataStream(MetricsType, "elastic_agent.elastic_agent", "default")).
+		WithDefaultESValidation(HasWorkingDataStream(MetricsType, "elastic_agent.fleet_server", "default")).
+		WithDefaultESValidation(HasWorkingDataStream(MetricsType, "elastic_agent.metricbeat", "default"))
+	// https://github.com/elastic/cloud-on-k8s/issues/7389
+	if v.LT(version.MinFor(8, 12, 0)) {
+		b = b.WithDefaultESValidation(HasWorkingDataStream(MetricsType, "elastic_agent.filebeat", "default"))
+	}
 	return b
 }
 
@@ -368,8 +473,8 @@ func (b Builder) RuntimeObjects() []k8sclient.Object {
 			if *podSecurityContext.RunAsUser == 0 {
 				// Only update the container's SecurityContext if the Pod runs as root.
 				b = b.WithContainerSecurityContext(corev1.SecurityContext{
-					Privileged: pointer.Bool(true),
-					RunAsUser:  pointer.Int64(0),
+					Privileged: ptr.To[bool](true),
+					RunAsUser:  ptr.To[int64](0),
 				})
 			}
 		}
@@ -378,13 +483,16 @@ func (b Builder) RuntimeObjects() []k8sclient.Object {
 }
 
 func (b Builder) getPodSecurityContext() *corev1.PodSecurityContext {
-	if b.Agent.Spec.Deployment != nil {
+	switch {
+	case b.Agent.Spec.Deployment != nil:
 		return b.Agent.Spec.Deployment.PodTemplate.Spec.SecurityContext
-	}
-	if b.Agent.Spec.DaemonSet != nil {
+	case b.Agent.Spec.DaemonSet != nil:
 		return b.Agent.Spec.DaemonSet.PodTemplate.Spec.SecurityContext
+	case b.Agent.Spec.StatefulSet != nil:
+		return b.Agent.Spec.StatefulSet.PodTemplate.Spec.SecurityContext
+	default:
+		return nil
 	}
-	return nil
 }
 
 var _ test.Builder = Builder{}

@@ -15,10 +15,70 @@ linters-settings:
     # put imports beginning with prefix after 3rd-party packages;
     local-prefixes: github.com/elastic/cloud-on-k8s
 
+  gosec:
+    excludes:
+      - G115 # potential integer overflow when converting between integer types
+
   nolintlint:
     allow-leading-space: false
     allow-unused: false
     require-specific: true
+
+  predeclared:
+    # comma-separated list of predeclared identifiers to not report on.
+    ignore: "min,max"
+
+  revive:
+    ## Default rules from https://github.com/mgechev/revive/blob/75a8e403f52c9634546fbfe5ec5429560ca74494/defaults.toml
+    enable-all-rules: false
+    rules:
+      - name: blank-imports
+        disabled: false
+      - name: context-as-argument
+        disabled: false
+      - name: context-keys-type
+        disabled: false
+      - name: dot-imports
+        disabled: false
+      - name: empty-block
+        disabled: false
+      - name: error-naming
+        disabled: false
+      - name: error-return
+        disabled: false
+      - name: error-strings
+        disabled: false
+      - name: errorf
+        disabled: false
+      - name: exported
+        disabled: false
+      - name: increment-decrement
+        disabled: false
+      - name: indent-error-flow
+        disabled: false
+      - name: package-comments
+        disabled: false
+      - name: range
+        disabled: false
+      - name: receiver-naming
+        disabled: false
+      - name: redefines-builtin-id
+        disabled: false
+      - name: superfluous-else
+        disabled: false
+      - name: time-naming
+        disabled: false
+      - name: unexported-return
+        disabled: false
+      - name: unreachable-code
+        disabled: false
+      - name: unused-parameter
+        ## Disabled as it generates a lot of rule failures.
+        disabled: true
+      - name: var-declaration
+        disabled: false
+      - name: var-naming
+        disabled: false
 
 # Run `golangci-lint linters` to see the descriptions for the linters. 
 linters:
@@ -26,7 +86,7 @@ linters:
     - cyclop
     - depguard
     - dupl
-    - exhaustivestruct
+    - err113
     - forbidigo
     - funlen
     - gci
@@ -36,18 +96,13 @@ linters:
     - gocyclo
     - godot
     - godox
-    - goerr113
     - gofmt
     - gofumpt
-    - golint
     - gomnd
     - gomodguard
-    - interfacer
-    - maligned
     - nlreturn
     - paralleltest
     - rowserrcheck
-    - scopelint
     - sqlclosecheck
     - stylecheck
     - testpackage
@@ -57,13 +112,11 @@ linters:
   enable:
     - asciicheck
     - bodyclose
-    - deadcode
     - dogsled
     - durationcheck
     - errcheck
     - errorlint
     - exhaustive
-    - exportloopref
     - forcetypeassert
     - gocritic
     - goheader
@@ -85,14 +138,12 @@ linters:
     - predeclared
     - revive
     - staticcheck
-    - structcheck
     - thelper
     - tparallel
     - typecheck
     - unconvert
     - unparam
     - unused
-    - varcheck
     - wastedassign
     - whitespace
 
@@ -104,9 +155,10 @@ issues:
   max-same-issues: 0
 
   exclude-rules:
-    - path: (^test/.*\.go|.*_test\.go)
+    - path: .*_test\.go
       linters:
         - unparam
+        - gosec
     - path: pkg/controller/common/tracing/apmclientgo/client.go
       linters:
         - staticcheck

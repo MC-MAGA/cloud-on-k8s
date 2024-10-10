@@ -229,7 +229,7 @@ endif
 endif
 
 # Deploy the operator against the current k8s cluster
-deploy: check-gke install-crds publish-operator-image apply-operator
+deploy: check-gke install-crds docker-push-operator apply-operator
 
 apply-operator:
 ifeq ($(strip $(MANAGED_NAMESPACES)),)
@@ -300,6 +300,9 @@ build-deployer:
 run-deployer: build-deployer
 	./hack/deployer/deployer execute --plans-file hack/deployer/config/plans.yml --config-file deployer-config.yml
 
+run-deployer-cleanup: build-deployer
+	./hack/deployer/deployer cleanup --plans-file hack/deployer/config/plans.yml --cluster-prefix $(E2E_TEST_CLUSTER_PREFIX) --config-file deployer-config.yml
+
 set-kubeconfig: build-deployer
 	./hack/deployer/deployer get credentials --plans-file hack/deployer/config/plans.yml --config-file deployer-config.yml
 
@@ -346,9 +349,6 @@ switch-eks:
 
 switch-kind:
 	@ echo "kind" > hack/deployer/config/provider
-
-switch-tanzu:
-	@ echo "tanzu" > hack/deployer/config/provider
 
 #################################
 ##  --    Docker images    --  ##
@@ -398,8 +398,10 @@ switch-registry-dev: # just use the default values of variables
 # -- build
 
 E2E_REGISTRY_NAMESPACE     ?= eck-dev
+E2E_TEST_CLUSTER_PREFIX    ?= "eck-e2e"
 export E2E_IMAGE_NAME      ?= $(REGISTRY)/$(E2E_REGISTRY_NAMESPACE)/eck-e2e-tests
 export E2E_IMAGE_TAG       ?= $(SHA1)
+E2E_IMG                    ?= $(E2E_IMAGE_NAME):$(E2E_IMAGE_TAG)
 
 # push amd64 image for dev purposes
 docker-push-e2e:
@@ -416,7 +418,7 @@ drivah-build-e2e:
 
 # -- run
 
-E2E_STACK_VERSION          ?= 8.9.0
+E2E_STACK_VERSION          ?= 8.15.0
 # regexp to filter tests to run
 export TESTS_MATCH         ?= "^Test"
 export E2E_JSON            ?= false
@@ -492,7 +494,7 @@ check-license-header:
 # Check if some changes exist in the workspace (eg. `make generate` added some changes)
 check-local-changes:
 	@ [[ "$$(git status --porcelain)" == "" ]] \
-		|| ( echo -e "\nError: dirty local changes"; git status --porcelain; exit 1 )
+		|| ( echo -e "\nError: dirty local changes"; git status --porcelain; git --no-pager diff; exit 1 )
 
 # Check if the predicate names in upgrade_predicates.go, are equal to the predicate names
 # defined in the user documentation in orchestration.asciidoc.

@@ -16,7 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
-	ptr "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -65,7 +66,7 @@ type baseReconcileAutoscaling struct {
 	licenseChecker   license.Checker
 
 	// iteration is the number of times this controller has run its Reconcile method
-	iteration uint64
+	iteration uint64 //nolint:structcheck
 }
 
 func (r baseReconcileAutoscaling) withRecorder(recorder record.EventRecorder) baseReconcileAutoscaling {
@@ -119,7 +120,7 @@ func (r *ReconcileElasticsearchAutoscaler) Reconcile(ctx context.Context, reques
 
 	// Ensure we watch the associated Elasticsearch
 	esNamespacedName := types.NamespacedName{Name: esa.Spec.ElasticsearchRef.Name, Namespace: request.Namespace}
-	if err := r.Watches.ReferencedResources.AddHandler(watches.NamedWatch{
+	if err := r.Watches.ReferencedResources.AddHandler(watches.NamedWatch[client.Object]{
 		Name:    dynamicWatchName(request),
 		Watched: []types.NamespacedName{esNamespacedName},
 		Watcher: request.NamespacedName,
@@ -222,7 +223,7 @@ func (r *ReconcileElasticsearchAutoscaler) Reconcile(ctx context.Context, reques
 
 	// Update the new status
 	newStatus := statusBuilder.Build()
-	esa.Status.ObservedGeneration = ptr.Int64(esa.Generation)
+	esa.Status.ObservedGeneration = ptr.To[int64](esa.Generation)
 	esa.Status.Conditions = esa.Status.Conditions.MergeWith(newStatus.Conditions...)
 	esa.Status.AutoscalingPolicyStatuses = newStatus.AutoscalingPolicyStatuses
 	updateStatus, err := r.updateStatus(ctx, log, esa)
@@ -257,7 +258,7 @@ func (r *ReconcileElasticsearchAutoscaler) reportAsUnhealthy(
 ) (reconcile.Result, error) {
 	now := metav1.Now()
 	newStatus := esa.Status.DeepCopy()
-	newStatus.ObservedGeneration = ptr.Int64(esa.Generation)
+	newStatus.ObservedGeneration = ptr.To[int64](esa.Generation)
 	newStatus.Conditions = newStatus.Conditions.MergeWith(
 		v1alpha1.Condition{
 			Type:               v1alpha1.ElasticsearchAutoscalerActive,
@@ -299,7 +300,7 @@ func (r *ReconcileElasticsearchAutoscaler) reportAsInactive(
 ) (reconcile.Result, error) {
 	now := metav1.Now()
 	newStatus := esa.Status.DeepCopy()
-	newStatus.ObservedGeneration = ptr.Int64(esa.Generation)
+	newStatus.ObservedGeneration = ptr.To[int64](esa.Generation)
 	newStatus.Conditions = newStatus.Conditions.MergeWith(
 		v1alpha1.Condition{
 			Type:               v1alpha1.ElasticsearchAutoscalerActive,

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"path"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	agentv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/agent/v1alpha1"
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
@@ -844,6 +846,9 @@ func Test_applyRelatedEsAssoc(t *testing.T) {
 			},
 		},
 	}).GetAssociations()[0]
+	assocToOtherNs.SetAssociationConf(&commonv1.AssociationConf{
+		CASecretName: "elasticsearch-es-http-certs-public",
+	})
 
 	expectedCAVolume := []corev1.Volume{
 		{
@@ -856,26 +861,30 @@ func Test_applyRelatedEsAssoc(t *testing.T) {
 			},
 		},
 	}
-	expectedCAVolumeMount := []corev1.VolumeMount{
-		{
-			Name:      "elasticsearch-certs",
-			ReadOnly:  true,
-			MountPath: "/mnt/elastic-internal/elasticsearch-association/agent-ns/elasticsearch/certs",
-		},
+	expectedCAVolumeMountFunc := func(ns string) []corev1.VolumeMount {
+		return []corev1.VolumeMount{
+			{
+				Name:      "elasticsearch-certs",
+				ReadOnly:  true,
+				MountPath: fmt.Sprintf("/mnt/elastic-internal/elasticsearch-association/%s/elasticsearch/certs", ns),
+			},
+		}
 	}
-	expectedCmd := []string{"/usr/bin/env", "bash", "-c", `#!/usr/bin/env bash
+	expectedCmdFunc := func(ns string) []string {
+		return []string{"/usr/bin/env", "bash", "-c", fmt.Sprintf(`#!/usr/bin/env bash
 set -e
-if [[ -f /mnt/elastic-internal/elasticsearch-association/agent-ns/elasticsearch/certs/ca.crt ]]; then
+if [[ -f /mnt/elastic-internal/elasticsearch-association/%[1]s/elasticsearch/certs/ca.crt ]]; then
   if [[ -f /usr/bin/update-ca-trust ]]; then
-    cp /mnt/elastic-internal/elasticsearch-association/agent-ns/elasticsearch/certs/ca.crt /etc/pki/ca-trust/source/anchors/
+    cp /mnt/elastic-internal/elasticsearch-association/%[1]s/elasticsearch/certs/ca.crt /etc/pki/ca-trust/source/anchors/
     /usr/bin/update-ca-trust
   elif [[ -f /usr/sbin/update-ca-certificates ]]; then
-    cp /mnt/elastic-internal/elasticsearch-association/agent-ns/elasticsearch/certs/ca.crt /usr/local/share/ca-certificates/
+    cp /mnt/elastic-internal/elasticsearch-association/%[1]s/elasticsearch/certs/ca.crt /usr/local/share/ca-certificates/
     /usr/sbin/update-ca-certificates
   fi
 fi
 /usr/bin/tini -- /usr/local/bin/docker-entrypoint -e
-`}
+`, ns)}
+	}
 	for _, tt := range []struct {
 		name        string
 		agent       agentv1alpha1.Agent
@@ -898,19 +907,33 @@ fi
 				Spec: agentv1alpha1.AgentSpec{
 					Version:            "7.16.2",
 					FleetServerEnabled: false,
+					DaemonSet: &agentv1alpha1.DaemonSetSpec{
+						PodTemplate: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name: "agent",
+										SecurityContext: &corev1.SecurityContext{
+											RunAsUser: ptr.To[int64](0),
+										},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 			assoc:   assocToSameNs,
 			wantErr: false,
 			wantPodSpec: generatePodSpec(func(ps corev1.PodSpec) corev1.PodSpec {
 				ps.Volumes = expectedCAVolume
-				ps.Containers[0].VolumeMounts = expectedCAVolumeMount
-				ps.Containers[0].Command = expectedCmd
+				ps.Containers[0].VolumeMounts = expectedCAVolumeMountFunc(agentNs)
+				ps.Containers[0].Command = expectedCmdFunc(agentNs)
 				return ps
 			}),
 		},
 		{
-			name: "fleet server enabled 8x",
+			name: "fleet server enabled 8x has volumes and volumeMount but no ca-init command",
 			agent: agentv1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "agent",
@@ -925,25 +948,45 @@ fi
 			wantErr: false,
 			wantPodSpec: generatePodSpec(func(ps corev1.PodSpec) corev1.PodSpec {
 				ps.Volumes = expectedCAVolume
-				ps.Containers[0].VolumeMounts = expectedCAVolumeMount
-				ps.Containers[0].Command = expectedCmd
+				ps.Containers[0].VolumeMounts = expectedCAVolumeMountFunc(agentNs)
+				ps.Containers[0].Command = nil
 				return ps
 			}),
 		},
 		{
-			name: "fleet server disabled, different namespace",
+			name: "fleet server disabled, different namespace still has volumes and volumeMount configured",
 			agent: agentv1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "agent",
 					Namespace: agentNs,
 				},
 				Spec: agentv1alpha1.AgentSpec{
-					FleetServerEnabled: false,
 					Version:            "7.16.2",
+					FleetServerEnabled: false,
+					DaemonSet: &agentv1alpha1.DaemonSetSpec{
+						PodTemplate: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name: "agent",
+										SecurityContext: &corev1.SecurityContext{
+											RunAsUser: ptr.To[int64](0),
+										},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 			assoc:   assocToOtherNs,
-			wantErr: true,
+			wantErr: false,
+			wantPodSpec: generatePodSpec(func(ps corev1.PodSpec) corev1.PodSpec {
+				ps.Volumes = expectedCAVolume
+				ps.Containers[0].VolumeMounts = expectedCAVolumeMountFunc("elasticsearch-ns")
+				ps.Containers[0].Command = expectedCmdFunc("elasticsearch-ns")
+				return ps
+			}),
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

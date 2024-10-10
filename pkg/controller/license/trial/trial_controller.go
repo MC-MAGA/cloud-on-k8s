@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -80,7 +79,7 @@ func (r *ReconcileTrials) Reconcile(ctx context.Context, request reconcile.Reque
 
 	validationMsg := validateEULA(secret)
 	if validationMsg != "" {
-		return r.invalidOperation(ctx, secret, validationMsg)
+		return reconcile.Result{}, r.invalidOperation(ctx, secret, validationMsg)
 	}
 
 	// 1. reconcile trial status secret
@@ -91,23 +90,25 @@ func (r *ReconcileTrials) Reconcile(ctx context.Context, request reconcile.Reque
 	// 2. reconcile the trial license itself
 	trialLicensePopulated := license.IsMissingFields() == nil
 	licenseStatus := r.validateLicense(ctx, license)
+
 	switch {
 	case !trialLicensePopulated && r.trialState.IsTrialStarted():
 		// user wants to start a trial for the second time
-		return r.invalidOperation(ctx, secret, trialOnlyOnceMsg)
+		return reconcile.Result{}, r.invalidOperation(ctx, secret, trialOnlyOnceMsg)
 	case !trialLicensePopulated && !r.trialState.IsTrialStarted():
 		// user wants to init a trial for the first time
-		return r.initTrialLicense(ctx, secret, license)
+		return reconcile.Result{}, r.initTrialLicense(ctx, secret, license)
 	case trialLicensePopulated && !validLicense(licenseStatus):
 		// existing license is invalid (expired or tampered with)
-		return r.invalidOperation(ctx, secret, userFriendlyMsgs[licenseStatus])
+		return reconcile.Result{}, r.invalidOperation(ctx, secret, userFriendlyMsgs[licenseStatus])
 	case trialLicensePopulated && validLicense(licenseStatus) && !r.trialState.IsTrialStarted():
 		// valid license, let's consider the trial started and complete the activation
-		return r.completeTrialActivation(ctx, request.NamespacedName)
+		return reconcile.Result{}, r.completeTrialActivation(ctx, request.NamespacedName)
 	case trialLicensePopulated && validLicense(licenseStatus) && r.trialState.IsTrialStarted():
 		// all good nothing to do
 	}
-	return reconcile.Result{}, nil
+
+	return reconcile.Result{}, err
 }
 
 func (r *ReconcileTrials) reconcileTrialStatus(ctx context.Context, licenseName types.NamespacedName, license licensing.EnterpriseLicense) error {
@@ -176,28 +177,28 @@ func (r *ReconcileTrials) startTrialActivation() error {
 	return nil
 }
 
-func (r *ReconcileTrials) completeTrialActivation(ctx context.Context, license types.NamespacedName) (reconcile.Result, error) {
+func (r *ReconcileTrials) completeTrialActivation(ctx context.Context, license types.NamespacedName) error {
 	if r.trialState.CompleteTrialActivation() {
 		expectedStatus, err := licensing.ExpectedTrialStatus(r.OperatorNamespace, license, r.trialState)
 		if err != nil {
-			return reconcile.Result{}, err
+			return err
 		}
 		_, err = reconciler.ReconcileSecret(ctx, r, expectedStatus, nil)
-		return reconcile.Result{}, err
+		return err
 	}
-	return reconcile.Result{}, nil
+	return nil
 }
 
-func (r *ReconcileTrials) initTrialLicense(ctx context.Context, secret corev1.Secret, license licensing.EnterpriseLicense) (reconcile.Result, error) {
+func (r *ReconcileTrials) initTrialLicense(ctx context.Context, secret corev1.Secret, license licensing.EnterpriseLicense) error {
 	if err := r.trialState.InitTrialLicense(ctx, &license); err != nil {
-		return reconcile.Result{}, err
+		return err
 	}
-	return reconcile.Result{}, licensing.UpdateEnterpriseLicense(ctx, r, secret, license)
+	return licensing.UpdateEnterpriseLicense(ctx, r, secret, license)
 }
 
-func (r *ReconcileTrials) invalidOperation(ctx context.Context, secret corev1.Secret, msg string) (reconcile.Result, error) {
+func (r *ReconcileTrials) invalidOperation(ctx context.Context, secret corev1.Secret, msg string) error {
 	setValidationMsg(ctx, &secret, msg)
-	return reconcile.Result{}, r.Update(ctx, &secret)
+	return r.Update(ctx, &secret)
 }
 
 func validLicense(status licensing.LicenseStatus) bool {
@@ -234,25 +235,20 @@ func newReconciler(mgr manager.Manager, params operator.Parameters) *ReconcileTr
 
 func addWatches(mgr manager.Manager, c controller.Controller) error {
 	// Watch the trial status secret and the enterprise trial licenses as well
-	return c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}),
-		handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-			secret, ok := obj.(*corev1.Secret)
-			if !ok {
-				// no contextual logging available
-				ulog.Log.Error(fmt.Errorf("object of type %T in secret watch", obj), "dropping event due to type error")
-			}
+	return c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{},
+		handler.TypedEnqueueRequestsFromMapFunc[*corev1.Secret](func(ctx context.Context, secret *corev1.Secret) []reconcile.Request {
 			if licensing.IsEnterpriseTrial(*secret) {
 				return []reconcile.Request{
 					{
 						NamespacedName: types.NamespacedName{
-							Namespace: obj.GetNamespace(),
-							Name:      obj.GetName(),
+							Namespace: secret.GetNamespace(),
+							Name:      secret.GetName(),
 						},
 					},
 				}
 			}
 
-			if obj.GetName() != licensing.TrialStatusSecretKey {
+			if secret.GetName() != licensing.TrialStatusSecretKey {
 				return nil
 			}
 			return []reconcile.Request{
@@ -264,7 +260,7 @@ func addWatches(mgr manager.Manager, c controller.Controller) error {
 				},
 			}
 		}),
-	)
+	))
 }
 
 // Add creates a new Trial Controller and adds it to the Manager with default RBAC. The Manager will set fields on the Controller

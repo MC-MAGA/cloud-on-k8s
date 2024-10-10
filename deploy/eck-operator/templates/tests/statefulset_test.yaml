@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: test operator statefulset
+templates:
+  - statefulset.yaml
+  - configmap.yaml
+tests:
+  - it: should have automount service account tokens set by default
+    asserts:
+      - template: statefulset.yaml
+        equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: true
+  - it: should disable automount service account tokens
+    set:
+      automountServiceAccountToken: false
+      serviceAccount:
+        automountServiceAccountToken: false
+    asserts:
+      - template: statefulset.yaml
+        equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+  - it: should render custom labels, and annotations values properly
+    set:
+      statefulsetAnnotations:
+        key1: value1
+      statefulsetLabels:
+        key2: value2
+    asserts:
+      - template: statefulset.yaml
+        equal:
+          path: metadata.annotations
+          value:
+            key1: value1
+      - template: statefulset.yaml
+        equal:
+          path: metadata.labels
+          value:
+            app.kubernetes.io/instance: RELEASE-NAME
+            app.kubernetes.io/managed-by: Helm
+            app.kubernetes.io/name: elastic-operator
+            app.kubernetes.io/version: 2.15.0-SNAPSHOT
+            helm.sh/chart: eck-operator-2.15.0-SNAPSHOT
+            key2: value2
+  - it: should use the specified webhook secret name
+    set:
+      webhook:
+        manageCerts: false
+        certsSecret: "my-webhook-server-cert"
+    asserts:
+      - template: statefulset.yaml
+        equal:
+          path: spec.template.spec.volumes[1].name
+          value: cert
+      - template: statefulset.yaml
+        equal:
+          path: spec.template.spec.volumes[1].secret.secretName
+          value: my-webhook-server-cert
+      - template: statefulset.yaml
+        equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: WEBHOOK_SECRET
+      - template: statefulset.yaml
+        equal:
+          path: spec.template.spec.containers[0].env[2].value
+          value: my-webhook-server-cert

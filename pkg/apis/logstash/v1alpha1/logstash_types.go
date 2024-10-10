@@ -7,6 +7,7 @@ package v1alpha1
 import (
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -14,11 +15,26 @@ import (
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
 )
 
+type LogstashHealth string
+
 const (
 	LogstashContainerName = "logstash"
 	// Kind is inferred from the struct name using reflection in SchemeBuilder.Register()
 	// we duplicate it as a constant here for practical purposes.
 	Kind = "Logstash"
+
+	// LogstashRedHealth means that the health is neither yellow nor green.
+	LogstashRedHealth LogstashHealth = "red"
+
+	// LogstashYellowHealth means that:
+	// 1) at least one Pod is Ready, and
+	// 2) any associations are configured and established
+	LogstashYellowHealth LogstashHealth = "yellow"
+
+	// LogstashGreenHealth means that:
+	// 1) all Pods are Ready, and
+	// 2) any associations are configured and established
+	LogstashGreenHealth LogstashHealth = "green"
 )
 
 // LogstashSpec defines the desired state of Logstash
@@ -88,6 +104,10 @@ type LogstashSpec struct {
 	// +kubebuilder:validation:Optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
+	// UpdateStrategy is a StatefulSetUpdateStrategy. The default type is "RollingUpdate".
+	// +kubebuilder:validation:Optional
+	UpdateStrategy appsv1.StatefulSetUpdateStrategy `json:"updateStrategy,omitempty"`
+
 	// VolumeClaimTemplates is a list of persistent volume claims to be used by each Pod.
 	// Every claim in this list must have a matching volumeMount in one of the containers defined in the PodTemplate.
 	// Items defined here take precedence over any default claims added by the operator with the same name.
@@ -124,6 +144,9 @@ type LogstashStatus struct {
 	// +kubebuilder:validation:Optional
 	AvailableNodes int32 `json:"availableNodes,omitempty"`
 
+	// +kubebuilder:validation:Optional
+	Health LogstashHealth `json:"health,omitempty"`
+
 	// ObservedGeneration is the most recent generation observed for this Logstash instance.
 	// It corresponds to the metadata generation, which is updated on mutation by the API Server.
 	// If the generation observed in status diverges from the generation in metadata, the Logstash
@@ -145,6 +168,7 @@ type LogstashStatus struct {
 // +k8s:openapi-gen=true
 // +kubebuilder:resource:categories=elastic,shortName=ls
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="health",type="string",JSONPath=".status.health",description="Health"
 // +kubebuilder:printcolumn:name="available",type="integer",JSONPath=".status.availableNodes",description="Available nodes"
 // +kubebuilder:printcolumn:name="expected",type="integer",JSONPath=".status.expectedNodes",description="Expected nodes"
 // +kubebuilder:printcolumn:name="age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -314,6 +338,10 @@ func (lses *LogstashESAssociation) SetAssociationConf(conf *commonv1.Association
 	}
 }
 
+func (lses *LogstashESAssociation) SupportsAuthAPIKey() bool {
+	return false
+}
+
 func (lses *LogstashESAssociation) AssociationID() string {
 	return fmt.Sprintf("%s-%s", lses.ElasticsearchCluster.ObjectSelector.Namespace, lses.ElasticsearchCluster.ObjectSelector.NameOrSecretName())
 }
@@ -367,6 +395,10 @@ func (lsmon *LogstashMonitoringAssociation) SetAssociationConf(assocConf *common
 	}
 }
 
+func (lsmon *LogstashMonitoringAssociation) SupportsAuthAPIKey() bool {
+	return false
+}
+
 func (lsmon *LogstashMonitoringAssociation) AssociationID() string {
 	return lsmon.ref.ToID()
 }
@@ -384,6 +416,21 @@ func (l *Logstash) MonitoringAssociation(esRef commonv1.ObjectSelector) commonv1
 		Logstash: l,
 		ref:      esRef.WithDefaultNamespace(l.Namespace),
 	}
+}
+
+// APIServerService returns the user defined API Service
+func (l *Logstash) APIServerService() LogstashService {
+	for _, service := range l.Spec.Services {
+		if UserServiceName(l.Name, service.Name) == APIServiceName(l.Name) {
+			return service
+		}
+	}
+	return LogstashService{}
+}
+
+// APIServerTLSOptions returns the user defined TLSOptions of API Service
+func (l *Logstash) APIServerTLSOptions() commonv1.TLSOptions {
+	return l.APIServerService().TLS
 }
 
 func init() {

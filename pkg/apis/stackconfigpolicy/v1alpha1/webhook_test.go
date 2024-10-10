@@ -28,6 +28,30 @@ func TestWebhook(t *testing.T) {
 			Object: func(t *testing.T, uid string) []byte {
 				t.Helper()
 				m := mkStackConfigPolicy(uid)
+				m.Spec.Elasticsearch.SecretMounts = []policyv1alpha1.SecretMount{
+					{
+						SecretName: "test1",
+						MountPath:  "/usr/test1",
+					},
+					{
+						SecretName: "test2",
+						MountPath:  "/usr/test2",
+					},
+				}
+				return serialize(t, m)
+			},
+			Check: test.ValidationWebhookSucceeded,
+		},
+		{
+			Name:      "create-valid-kibana",
+			Operation: admissionv1beta1.Create,
+			Object: func(t *testing.T, uid string) []byte {
+				t.Helper()
+				m := mkStackConfigPolicy(uid)
+				m.Spec.Elasticsearch = policyv1alpha1.ElasticsearchConfigPolicySpec{}
+				m.Spec.Kibana = policyv1alpha1.KibanaConfigPolicySpec{
+					Config: &commonv1.Config{Data: map[string]interface{}{"a": "b"}},
+				}
 				return serialize(t, m)
 			},
 			Check: test.ValidationWebhookSucceeded,
@@ -77,7 +101,29 @@ func TestWebhook(t *testing.T) {
 				return serialize(t, m)
 			},
 			Check: test.ValidationWebhookFailed(
-				"Elasticsearch settings are mandatory and must not be empty",
+				"One out of Elasticsearch or Kibana settings is mandatory, both must not be empty",
+			),
+		},
+		{
+			Name:      "create-duplicate-mountpaths",
+			Operation: admissionv1beta1.Create,
+			Object: func(t *testing.T, uid string) []byte {
+				t.Helper()
+				m := mkStackConfigPolicy(uid)
+				m.Spec.Elasticsearch.SecretMounts = []policyv1alpha1.SecretMount{
+					{
+						SecretName: "test1",
+						MountPath:  "/usr/test",
+					},
+					{
+						SecretName: "test2",
+						MountPath:  "/usr/test",
+					},
+				}
+				return serialize(t, m)
+			},
+			Check: test.ValidationWebhookFailed(
+				"SecretMounts cannot have duplicate mount paths",
 			),
 		},
 	}

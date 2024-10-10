@@ -9,12 +9,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
-	ptr "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash/configs"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/v2/test/e2e/cmd/run"
@@ -22,8 +23,10 @@ import (
 )
 
 type Builder struct {
-	Logstash    logstashv1alpha1.Logstash
-	MutatedFrom *Builder
+	Logstash          logstashv1alpha1.Logstash
+	MutatedFrom       *Builder
+	GlobalCA          bool
+	ExpectedAPIServer *configs.APIServer
 }
 
 func NewBuilder(name string) Builder {
@@ -150,17 +153,21 @@ func (b Builder) WithVolumeMounts(mounts ...corev1.VolumeMount) Builder {
 }
 
 func (b Builder) WithTestStorageClass() Builder {
-	for _, vc := range b.Logstash.Spec.VolumeClaimTemplates {
+	hasDefaultVolumeClaim := false
+	for i, vc := range b.Logstash.Spec.VolumeClaimTemplates {
+		// a custom volume claim template is set patch it to use the test storage class
+		b.Logstash.Spec.VolumeClaimTemplates[i].Spec.StorageClassName = ptr.To(test.DefaultStorageClass)
 		if vc.Name == volume.LogstashDataVolumeName {
-			// a custom volume claim template is set we don't need to do anything
-			return b
+			hasDefaultVolumeClaim = true
 		}
 	}
 
-	// define the default volume claim with the e2e storage class
-	vc := volume.DefaultDataVolumeClaim.DeepCopy()
-	vc.Spec.StorageClassName = ptr.String(test.DefaultStorageClass)
-	b.Logstash.Spec.VolumeClaimTemplates = append(b.Logstash.Spec.VolumeClaimTemplates, *vc)
+	// define the default volume claim with the e2e storage class in case it is missing
+	if !hasDefaultVolumeClaim {
+		vc := volume.DefaultDataVolumeClaim.DeepCopy()
+		vc.Spec.StorageClassName = ptr.To[string](test.DefaultStorageClass)
+		b.Logstash.Spec.VolumeClaimTemplates = append(b.Logstash.Spec.VolumeClaimTemplates, *vc)
+	}
 	return b
 }
 
@@ -197,6 +204,12 @@ func (b Builder) WithSecureSettings(secretSource ...commonv1.SecretSource) Build
 
 func (b Builder) WithPodTemplate(podTemplate corev1.PodTemplateSpec) Builder {
 	b.Logstash.Spec.PodTemplate = podTemplate
+	return b
+}
+
+// WithExpectedAPIServer builder uses the username password in APIServer to verify endpoint
+func (b Builder) WithExpectedAPIServer(apiServer configs.APIServer) Builder {
+	b.ExpectedAPIServer = &apiServer
 	return b
 }
 
@@ -253,6 +266,24 @@ func (b Builder) SkipTest() bool {
 
 	ver := version.MustParse(b.Logstash.Spec.Version)
 	return supportedVersions.WithinRange(ver) != nil
+}
+
+func (b Builder) WithGlobalCA(v bool) Builder {
+	b.GlobalCA = v
+	return b
+}
+
+func (b Builder) DeepCopy() *Builder {
+	ls := b.Logstash.DeepCopy()
+	builderCopy := Builder{
+		Logstash: *ls,
+	}
+	if b.MutatedFrom != nil {
+		builderCopy.MutatedFrom = b.MutatedFrom.DeepCopy()
+	}
+	builderCopy.GlobalCA = b.GlobalCA
+	builderCopy.ExpectedAPIServer = b.ExpectedAPIServer
+	return &builderCopy
 }
 
 var _ test.Builder = Builder{}

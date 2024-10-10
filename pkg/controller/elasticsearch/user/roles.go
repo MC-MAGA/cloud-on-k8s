@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/utils/ptr"
 
 	beatv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/beat/v1beta1"
 	esclient "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
@@ -25,6 +26,11 @@ const (
 	ProbeUserRole = "elastic_internal_probe_user"
 	// RemoteMonitoringCollectorBuiltinRole is the name of the built-in remote_monitoring_collector role.
 	RemoteMonitoringCollectorBuiltinRole = "remote_monitoring_collector"
+
+	// DiagnosticsUserRoleV80 is the name of the built-in role for ECK diagnostics use from version 8.0 to 8.4.
+	DiagnosticsUserRoleV80 = "elastic_internal_diagnostics_v80"
+	// DiagnosticsUserRoleV85 is the name of the built-in role for ECK diagnostics use from version 8.5.
+	DiagnosticsUserRoleV85 = "elastic_internal_diagnostics_v85"
 
 	// ApmUserRoleV6 is the name of the role used by 6.8.x APMServer instances to connect to Elasticsearch.
 	ApmUserRoleV6 = "eck_apm_user_role_v6"
@@ -62,10 +68,57 @@ const (
 )
 
 var (
+	diagnosticsRoleIndices = []esclient.IndexRole{
+		{
+			Names:                  []string{"*"},
+			Privileges:             []string{"monitor", "read", "view_index_metadata"},
+			AllowRestrictedIndices: ptr.To[bool](true),
+		},
+	}
+	diagnosticsAppsKibanaPrivileges = []esclient.ApplicationRole{
+		{
+			Application: "kibana-.kibana",
+			Resources:   []string{"*"},
+			Privileges: []string{
+				"feature_ml.read",
+				"feature_siem.read",
+				"feature_siem.read_alerts",
+				"feature_siem.policy_management_read",
+				"feature_siem.endpoint_list_read",
+				"feature_siem.trusted_applications_read",
+				"feature_siem.event_filters_read",
+				"feature_siem.host_isolation_exceptions_read",
+				"feature_siem.blocklist_read",
+				"feature_siem.actions_log_management_read",
+				"feature_securitySolutionCases.read",
+				"feature_securitySolutionAssistant.read",
+				"feature_actions.read",
+				"feature_builtInAlerts.read",
+				"feature_fleet.all",
+				"feature_fleetv2.all",
+				"feature_osquery.read",
+				"feature_indexPatterns.read",
+				"feature_discover.read",
+				"feature_dashboard.read",
+				"feature_maps.read",
+				"feature_visualize.read",
+			},
+		},
+	}
 	// PredefinedRoles to create for internal needs.
 	PredefinedRoles = RolesFileContent{
 		ProbeUserRole:     esclient.Role{Cluster: []string{"monitor"}},
 		ClusterManageRole: esclient.Role{Cluster: []string{"manage"}},
+		DiagnosticsUserRoleV80: esclient.Role{
+			Cluster:      []string{"monitor", "monitor_snapshot", "manage", "read_ilm", "manage_security"},
+			Indices:      diagnosticsRoleIndices,
+			Applications: diagnosticsAppsKibanaPrivileges,
+		},
+		DiagnosticsUserRoleV85: esclient.Role{
+			Cluster:      []string{"monitor", "monitor_snapshot", "manage", "read_ilm", "read_security"},
+			Indices:      diagnosticsRoleIndices,
+			Applications: diagnosticsAppsKibanaPrivileges,
+		},
 		ApmUserRoleV6: esclient.Role{
 			Cluster: []string{"monitor", "manage_index_templates"},
 			Indices: []esclient.IndexRole{
@@ -192,6 +245,15 @@ var (
 			},
 		},
 	}
+
+	// Additional index permissions for Beats users
+	BeatsAdditionalPermissions = map[string]string{
+		"filebeat":   "logs-*",
+		"metricbeat": "metrics-*",
+		"packetbeat": "logs-*",
+		"auditbeat":  "logs-*",
+		"heartbeat":  "synthetics-*",
+	}
 )
 
 func init() {
@@ -200,7 +262,7 @@ func init() {
 			Cluster: []string{"monitor", "manage_ilm", "manage_ml", "read_ilm", "cluster:admin/ingest/pipeline/get"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read", "create_doc", "view_index_metadata", "create_index"},
 				},
 			},
@@ -210,7 +272,7 @@ func init() {
 			Cluster: []string{"monitor", "manage_ilm", "manage_ml", "read_ilm", "cluster:admin/ingest/pipeline/get"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read", "create_doc", "view_index_metadata", "create_index"},
 				},
 			},
@@ -220,7 +282,7 @@ func init() {
 			Cluster: []string{"monitor", "manage_ilm", "manage_ml", "read_ilm", "manage_pipeline"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read", "index", "view_index_metadata", "create_index"},
 				},
 			},
@@ -230,7 +292,7 @@ func init() {
 			Cluster: []string{"manage_index_templates", "monitor", "manage_ilm", "manage_ml", "manage_pipeline"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read", "index", "create_index"},
 				},
 			},
@@ -240,7 +302,7 @@ func init() {
 			Cluster: []string{"monitor", "manage_ilm", "manage_ml"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read"},
 				},
 			},
@@ -250,7 +312,7 @@ func init() {
 			Cluster: []string{"monitor", "manage_ilm", "manage_ml"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read"},
 				},
 			},
@@ -260,7 +322,7 @@ func init() {
 			Cluster: []string{"manage_index_templates", "monitor", "manage_ilm", "manage_ml"},
 			Indices: []esclient.IndexRole{
 				{
-					Names:      []string{fmt.Sprintf("%s-*", beat)},
+					Names:      append([]string{fmt.Sprintf("%s-*", beat)}, BeatsAdditionalPermissions[beat]),
 					Privileges: []string{"manage", "read"},
 				},
 			},

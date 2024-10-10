@@ -8,10 +8,12 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/annotation"
@@ -29,7 +31,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/stackmon"
 	esvolume "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/pointer"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/maps"
 )
 
 const (
@@ -57,6 +59,7 @@ func BuildPodTemplateSpec(
 	cfg settings.CanonicalConfig,
 	keystoreResources *keystore.Resources,
 	setDefaultSecurityContext bool,
+	policyConfig PolicyConfig,
 ) (corev1.PodTemplateSpec, error) {
 	ver, err := version.Parse(es.Spec.Version)
 	if err != nil {
@@ -64,7 +67,7 @@ func BuildPodTemplateSpec(
 	}
 
 	downwardAPIVolume := volume.DownwardAPI{}.WithAnnotations(es.HasDownwardNodeLabels())
-	volumes, volumeMounts := buildVolumes(es.Name, ver, nodeSet, keystoreResources, downwardAPIVolume)
+	volumes, volumeMounts := buildVolumes(es.Name, ver, nodeSet, keystoreResources, downwardAPIVolume, policyConfig.AdditionalVolumes)
 
 	labels, err := buildLabels(es, cfg, nodeSet)
 	if err != nil {
@@ -87,7 +90,7 @@ func BuildPodTemplateSpec(
 
 	if ver.GTE(minDefaultSecurityContextVersion) && setDefaultSecurityContext {
 		builder = builder.WithPodSecurityContext(corev1.PodSecurityContext{
-			FSGroup: pointer.Int64(defaultFsGroup),
+			FSGroup: ptr.To[int64](defaultFsGroup),
 		})
 	}
 
@@ -98,7 +101,7 @@ func BuildPodTemplateSpec(
 	if err := client.Get(context.Background(), types.NamespacedName{Namespace: es.Namespace, Name: esv1.ScriptsConfigMap(es.Name)}, esScripts); err != nil {
 		return corev1.PodTemplateSpec{}, err
 	}
-	annotations := buildAnnotations(es, cfg, keystoreResources, esScripts.ResourceVersion)
+	annotations := buildAnnotations(es, cfg, keystoreResources, getScriptsConfigMapContent(esScripts), policyConfig.PolicyAnnotations)
 
 	// Attempt to detect if the default data directory is mounted in a volume.
 	// If not, it could be a bug, a misconfiguration, or a custom storage configuration that requires the user to
@@ -115,13 +118,13 @@ func BuildPodTemplateSpec(
 	builder = builder.
 		WithLabels(labels).
 		WithAnnotations(annotations).
-		WithDockerImage(es.Spec.Image, container.ImageRepository(container.ElasticsearchImage, es.Spec.Version)).
+		WithDockerImage(es.Spec.Image, container.ImageRepository(container.ElasticsearchImage, ver)).
 		WithResources(DefaultResources).
 		WithTerminationGracePeriod(DefaultTerminationGracePeriodSeconds).
 		WithPorts(defaultContainerPorts).
-		WithReadinessProbe(*NewReadinessProbe()).
+		WithReadinessProbe(*NewReadinessProbe(ver)).
 		WithAffinity(DefaultAffinity(es.Name)).
-		WithEnv(DefaultEnvVars(es.Spec.HTTP, headlessServiceName)...).
+		WithEnv(DefaultEnvVars(ver, es.Spec.HTTP, headlessServiceName)...).
 		WithVolumes(volumes...).
 		WithVolumeMounts(volumeMounts...).
 		WithInitContainers(initContainers...).
@@ -189,7 +192,8 @@ func buildAnnotations(
 	es esv1.Elasticsearch,
 	cfg settings.CanonicalConfig,
 	keystoreResources *keystore.Resources,
-	scriptsVersion string,
+	scriptsContent string,
+	policyAnnotations map[string]string,
 ) map[string]string {
 	// start from our defaults
 	annotations := map[string]string{
@@ -199,8 +203,8 @@ func buildAnnotations(
 	configHash := fnv.New32a()
 	// hash of the ES config to rotate the pod on config changes
 	hash.WriteHashObject(configHash, cfg)
-	// hash of the scripts' version to rotate the pod if the scripts have changed
-	_, _ = configHash.Write([]byte(scriptsVersion))
+	// hash of the scripts' content to rotate the pod if the scripts have changed
+	_, _ = configHash.Write([]byte(scriptsContent))
 
 	if es.HasDownwardNodeLabels() {
 		// list of node labels expected on the pod to rotate the pod when the list is updated
@@ -209,11 +213,18 @@ func buildAnnotations(
 
 	if keystoreResources != nil {
 		// resource version of the secure settings secret to rotate the pod on secure settings change
-		_, _ = configHash.Write([]byte(keystoreResources.Version))
+		_, _ = configHash.Write([]byte(keystoreResources.Hash))
+	}
+
+	if !es.Spec.Transport.TLS.SelfSignedEnabled() {
+		annotations[esv1.TransportCertDisabledAnnotationName] = "true"
 	}
 
 	// set the annotation in place
 	annotations[configHashAnnotationName] = fmt.Sprint(configHash.Sum32())
+
+	// set policy annotations
+	maps.Merge(annotations, policyAnnotations)
 
 	return annotations
 }
@@ -244,4 +255,22 @@ func enableLog4JFormatMsgNoLookups(builder *defaults.PodTemplateBuilder) {
 			)
 		}
 	}
+}
+
+// Get contents of the script ConfigMap to generate config hash, excluding the suspended_pods.txt, as it may change over time.
+func getScriptsConfigMapContent(cm *corev1.ConfigMap) string {
+	var builder strings.Builder
+	var keys []string
+
+	for k := range cm.Data {
+		if k != initcontainer.SuspendedHostsFile {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		builder.WriteString(cm.Data[k])
+	}
+	return builder.String()
 }

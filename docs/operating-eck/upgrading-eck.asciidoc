@@ -20,6 +20,8 @@ Before upgrading, refer to the <<release-notes-{eck_version}, release notes>> to
 
 Note that the release notes and highlights only list the changes since the last release. If during the upgrade you skip any intermediate versions and go for example from 1.0.0 directly to {eck_version}, review the release notes and highlights of each of the skipped releases to understand all the breaking changes you might encounter during and after the upgrade.
 
+CAUTION: When upgrading always ensure that the version of the CRDs installed in the cluster matches the version of the operator. If you are using Helm, the CRDs are upgraded automatically as part of the Helm chart. If you are using the YAML manifests, you must upgrade the CRDs manually. Running differing versions of the CRDs and the operator is not a supported configuration and can lead to unexpected behavior.
+
 [float]
 [id="{p}-upgrade-instructions"]
 == Upgrade instructions
@@ -97,7 +99,9 @@ This will update the ECK installation to the latest binary and update the CRDs a
 
 Upgrading the operator results in a one-time update to existing managed resources in the cluster. This potentially triggers a rolling restart of pods by Kubernetes to apply those changes. The following list contains the ECK operator versions that would cause a rolling restart after they have been installed.
 
- 1.6, 1.9, 2.0, 2.1, 2.2, 2.4, 2.5, 2.6, 2.7, 2.8
+ 1.6, 1.9, 2.0, 2.1, 2.2, 2.4, 2.5, 2.6, 2.7, 2.8, 2.14
+
+NOTE: Stepping over one of these versions, for example, upgrading ECK from 2.6 to 2.9, still triggers a rolling restart.
 
 If you have a very large Elasticsearch cluster or multiple Elastic Stack deployments, this rolling restart might be disruptive or inconvenient. To have more control over when the pods belonging to a particular deployment should be restarted, you can <<{p}-exclude-resource,add an annotation>> to the corresponding resources to temporarily exclude them from being managed by the operator. When the time is convenient, you can remove the annotation and let the rolling restart go through.
 

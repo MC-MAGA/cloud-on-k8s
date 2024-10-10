@@ -14,10 +14,11 @@ import (
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	sset "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/statefulset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
+	es_sset "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
@@ -40,8 +41,8 @@ func (l ResourcesList) ForStatefulSet(name string) (Resources, error) {
 	return Resources{}, fmt.Errorf("no expected resources for StatefulSet %s", name)
 }
 
-func (l ResourcesList) StatefulSets() sset.StatefulSetList {
-	ssetList := make(sset.StatefulSetList, 0, len(l))
+func (l ResourcesList) StatefulSets() es_sset.StatefulSetList {
+	ssetList := make(es_sset.StatefulSetList, 0, len(l))
 	for _, resource := range l {
 		ssetList = append(ssetList, resource.StatefulSet)
 	}
@@ -57,7 +58,7 @@ func BuildExpectedResources(
 	client k8s.Client,
 	es esv1.Elasticsearch,
 	keystoreResources *keystore.Resources,
-	existingStatefulSets sset.StatefulSetList,
+	existingStatefulSets es_sset.StatefulSetList,
 	ipFamily corev1.IPFamily,
 	setDefaultSecurityContext bool,
 ) (ResourcesList, error) {
@@ -68,19 +69,25 @@ func BuildExpectedResources(
 		return nil, err
 	}
 
+	// Get policy config from StackConfigPolicy
+	policyConfig, err := getPolicyConfig(ctx, client, es)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, nodeSpec := range es.Spec.NodeSets {
 		// build es config
 		userCfg := commonv1.Config{}
 		if nodeSpec.Config != nil {
 			userCfg = *nodeSpec.Config
 		}
-		cfg, err := settings.NewMergedESConfig(es.Name, ver, ipFamily, es.Spec.HTTP, userCfg)
+		cfg, err := settings.NewMergedESConfig(es.Name, ver, ipFamily, es.Spec.HTTP, userCfg, policyConfig.ElasticsearchConfig)
 		if err != nil {
 			return nil, err
 		}
 
 		// build stateful set and associated headless service
-		statefulSet, err := BuildStatefulSet(ctx, client, es, nodeSpec, cfg, keystoreResources, existingStatefulSets, setDefaultSecurityContext)
+		statefulSet, err := BuildStatefulSet(ctx, client, es, nodeSpec, cfg, keystoreResources, existingStatefulSets, setDefaultSecurityContext, policyConfig)
 		if err != nil {
 			return nil, err
 		}

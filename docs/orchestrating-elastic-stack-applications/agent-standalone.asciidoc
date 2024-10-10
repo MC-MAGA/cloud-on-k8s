@@ -63,7 +63,7 @@ spec:
 EOF
 ----
 +
-<1> The root user is required to persist state in a hostPath volume. See <<{p}_storing_local_state_in_host_path_volume>> on how to disable this feature.
+<1> The root user is required to persist state in a `hostPath` volume. See <<{p}_storing_local_state_in_host_path_volume>> for options to not run the Agent container as root.
 +
 Check <<{p}-elastic-agent-configuration-examples>> for more ready-to-use manifests.
 
@@ -170,7 +170,7 @@ spec:
             period: 10s
 ----
 
-<1> The root user is required to persist state in a hostPath volume. See <<{p}_storing_local_state_in_host_path_volume>> on how to disable this feature.
+<1> The root user is required to persist state in a `hostPath` volume. See <<{p}_storing_local_state_in_host_path_volume>> for options to not run the Agent container as root.
 
 Alternatively, it can be provided through a Secret specified in the `configRef` element. The Secret must have an `agent.yml` entry with this configuration:
 [source,yaml,subs="attributes,+macros"]
@@ -273,7 +273,7 @@ The `elasticsearchRefs` element allows ECK to automatically configure Elastic Ag
 [id="{p}-elastic-agent-set-output"]
 === Set manually Elastic Agent outputs
 
-If the `elasticsearchRefs` element is specified, ECK populates the outputs section of the Elastic Agent configuration. ECK creates a user with appropriate roles and permissions and uses its credentials. If required, it also mounts the CA certificate in all Agent Pods, and recreates Pods when this certificate changes.
+If the `elasticsearchRefs` element is specified, ECK populates the outputs section of the Elastic Agent configuration. ECK creates a user with appropriate roles and permissions and uses its credentials. If required, it also mounts the CA certificate in all Agent Pods, and recreates Pods when this certificate changes. Moreover, `elasticsearchRef` element can refer to an ECK-managed Elasticsearch cluster by filling the `name`, `namespace`, `serviceName` fields accordingly, as well as to a Kubernetes secret that contains the connection information to an Elasticsearch cluster not managed by it. In the latter case, for authenticating against the Elasticsearch cluster the secret must contain the fields of `url` and either the `username` with `password` or the `api-key`. Refer to <<{p}-connect-to-unmanaged-resources>> for additional details.
 
 The outputs can also be set manually. To do that, remove the `elasticsearchRefs` element from the specification and include an appropriate output configuration in the `config`, or indirectly through the `configRef` mechanism.
 
@@ -304,7 +304,7 @@ spec:
 [id="{p}-elastic-agent-chose-the-deployment-model"]
 === Choose the deployment model
 
-Depending on the use case, Elastic Agent may need to be deployed as a link:https://kubernetes.io/docs/concepts/workloads/controllers/deployment/[Deployment] or a link:https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/[DaemonSet]. Provide a `podTemplate` element under either the `deployment` or the `daemonSet` element in the specification to choose how your Elastic Agents should be deployed. When choosing the `deployment` option you can additionally specify the link:https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy[strategy] used to replace old Pods with new ones.
+Depending on the use case, Elastic Agent may need to be deployed as a link:https://kubernetes.io/docs/concepts/workloads/controllers/deployment/[Deployment], a link:https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/[DaemonSet], or a link:https://kubernetes.io/docs/concepts/workloads/controllers/statefulSet/[StatefulSet]. Provide a `podTemplate` element under either the `deployment` or the `daemonSet` element in the specification to choose how your Elastic Agents should be deployed. When choosing the `deployment` option you can additionally specify the link:https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy[strategy] used to replace old Pods with new ones.
 
 Similarly, you can set the link:https://kubernetes.io/docs/tasks/manage-daemon/update-daemon-set/[update strategy] when deploying as a DaemonSet. This allows you to control the rollout speed for new configuration by modifying the `maxUnavailable` setting:
 
@@ -404,6 +404,7 @@ roleRef:
 
 To deploy Elastic Agent in clusters with the Pod Security Policy admission controller enabled, or in <<{p}-openshift-agent,OpenShift>> clusters, you might need to grant additional permissions to the Service Account used by the Elastic Agent Pods. Those Service Accounts must be bound to a Role or ClusterRole that has `use` permission for the required Pod Security Policy or Security Context Constraints. Different Elastic Agent integrations might require different settings set in their PSP/link:{p}-openshift-agent.html[SCC].
 
+include::agent-fleet.asciidoc[tags=configuration-example-elastic-agent-running-as-a-non-root-user]
 
 [id="{p}-elastic-agent-configuration-examples"]
 == Configuration examples
@@ -440,22 +441,4 @@ kubectl apply -f {agent_recipes}/multi-output.yaml
 
 Deploys two Elasticsearch clusters and two Kibana instances together with single Elastic Agent DaemonSet in standalone mode with System integration enabled. System metrics are sent to the `elasticsearch` cluster. Elastic Agent monitoring data is sent to `elasticsearch-mon` cluster.
 
-=== Storing local state in host path volume
-Elastic Agent when managed by ECK stores local state in a host path volume. This ensures that integrations run by the agent can continue their work without duplicating work that has already been done after the Pod has been recreated for example because of a Pod configuration change.
-If local state storage in host path volumes is not desired this can be turned off by configuring an `emptyDir` volume instead:
-
-[source,yaml]
-----
-apiVersion: agent.k8s.elastic.co/v1alpha1
-kind: Agent
-metadata:
-  name: elastic-agent
-spec:
-  deployment:
-    podTemplate:
-      spec:
-        volumes:
-        - name: agent-data
-          emptyDir: {}
-...
-----
+include::agent-fleet.asciidoc[tags=elastic-agent-fleet-known-limitations-local-state]

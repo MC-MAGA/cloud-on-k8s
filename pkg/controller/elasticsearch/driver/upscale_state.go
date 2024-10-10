@@ -11,16 +11,17 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	sset "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/statefulset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/bootstrap"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/nodespec"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/reconcile"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
+	es_sset "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/pointer"
 )
 
 type upscaleState struct {
@@ -38,7 +39,7 @@ type upscaleState struct {
 
 func newUpscaleState(
 	ctx upscaleCtx,
-	actualStatefulSets sset.StatefulSetList,
+	actualStatefulSets es_sset.StatefulSetList,
 	expectedResources nodespec.ResourcesList,
 ) *upscaleState {
 	return &upscaleState{
@@ -64,7 +65,7 @@ func buildOnce(s *upscaleState) error {
 
 		if s.isBootstrapped {
 			// is there a master node creation in progress already?
-			masters, err := sset.GetActualMastersForCluster(s.ctx.k8sClient, s.ctx.es)
+			masters, err := es_sset.GetActualMastersForCluster(s.ctx.k8sClient, s.ctx.es)
 			if err != nil {
 				result = err
 				return
@@ -179,12 +180,12 @@ func (s *upscaleState) limitNodesCreation(
 	actualReplicas := sset.GetReplicas(actual)
 	targetReplicas := sset.GetReplicas(toApply)
 
-	nodespec.UpdateReplicas(&toApply, pointer.Int32(actualReplicas))
+	nodespec.UpdateReplicas(&toApply, ptr.To[int32](actualReplicas))
 	replicasToCreate := targetReplicas - actualReplicas
 	replicasToCreate = s.getMaxNodesToCreate(replicasToCreate)
 
 	if replicasToCreate > 0 {
-		nodespec.UpdateReplicas(&toApply, pointer.Int32(actualReplicas+replicasToCreate))
+		nodespec.UpdateReplicas(&toApply, ptr.To[int32](actualReplicas+replicasToCreate))
 		s.recordNodesCreation(replicasToCreate)
 		s.loggerFor(toApply).Info(
 			"Creating nodes",
@@ -219,7 +220,7 @@ func (s *upscaleState) limitMasterNodesCreation(
 	actualReplicas := sset.GetReplicas(actual)
 	targetReplicas := sset.GetReplicas(toApply)
 
-	nodespec.UpdateReplicas(&toApply, pointer.Int32(actualReplicas))
+	nodespec.UpdateReplicas(&toApply, ptr.To[int32](actualReplicas))
 	for rep := actualReplicas + 1; rep <= targetReplicas; rep++ {
 		if !s.canCreateMasterNode() {
 			msg := "Limiting master nodes creation to one at a time"
@@ -232,7 +233,7 @@ func (s *upscaleState) limitMasterNodesCreation(
 			break
 		}
 		// allow one more master node to be created
-		nodespec.UpdateReplicas(&toApply, pointer.Int32(rep))
+		nodespec.UpdateReplicas(&toApply, ptr.To[int32](rep))
 		s.recordMasterNodeCreation()
 		msg := "Creating master node"
 		s.loggerFor(toApply).Info(

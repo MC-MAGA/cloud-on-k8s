@@ -18,7 +18,7 @@
 
 # Version of Elasticsearch.
 #
-version: 8.10.0-SNAPSHOT
+version: 8.16.0-SNAPSHOT
 
 # Elasticsearch Docker image to deploy
 #
@@ -44,7 +44,7 @@ monitoring: {}
   # metrics:
   #   elasticsearchRefs:
   #   - name: monitoring
-  #     namespace: observability 
+  #     namespace: observability
   # logs:
   #   elasticsearchRefs:
   #   - name: monitoring
@@ -91,7 +91,7 @@ http: {}
 # Control Elasticsearch Secure Settings.
 # ref: https://www.elastic.co/guide/en/cloud-on-k8s/current/k8s-es-secure-settings.html#k8s-es-secure-settings
 #
-secureSettings: {}
+secureSettings: []
   # - secretName: one-secure-settings-secret
   # Projection of secret keys to specific paths
   # - secretName: gcs-secure-settings
@@ -126,7 +126,8 @@ remoteClusters: {}
 volumeClaimDeletePolicy: ""
 
 # Settings to limit the disruption when pods need to be rescheduled for some reason such as upgrades or routine maintenance.
-# By default, if not set, the operator sets a budget that selects all Elastisearch cluster pods and sets `maxUnavailable` to 1.
+# By default, if not set, the operator sets a budget that doesn't allow any pod to be removed in case the cluster is not green or if there is only one node of type `data` or `master`.
+# In all other cases the default PodDisruptionBudget sets `minUnavailable` equal to the total number of nodes minus 1.
 # To completely disable the pod disruption budget set `disabled` to true.
 #
 # podDisruptionBudget:
@@ -175,7 +176,7 @@ nodeSets:
     # https://v1-24.docs.kubernetes.io/docs/reference/generated/kubernetes-api/v1.24/#podtemplatespec-v1-core
     #
     # Only the commonly overridden/used fields will be noted below.
-    # 
+    #
     spec:
 
     # If specified, the pod's scheduling constraints
@@ -206,7 +207,7 @@ nodeSets:
         resources:
           # Requests describes the minimum amount of compute resources required. If Requests is omitted for a container,
           # it defaults to Limits if that is explicitly specified, otherwise to an implementation-defined value.
-          # 
+          #
           # Defaults used by the ECK Operator, if not specified, are below
           limits:
             # cpu: 1
@@ -266,7 +267,7 @@ nodeSets:
     # - command:
     #   - sh
     #   - "-c"
-    #   - bin/elasticsearch-plugin install --batch repository-s3
+    #   - bin/elasticsearch-plugin remove --purge analysis-icu ; bin/elasticsearch-plugin install --batch analysis-icu
     #   name: install-plugins
     #   securityContext:
     #     privileged: true
@@ -313,3 +314,74 @@ nodeSets:
     # List of volumes that can be mounted by containers belonging to the pod.
     # https://kubernetes.io/docs/concepts/storage/volumes
     # volumes: []
+
+# Settings for controlling Elasticsearch ingress. Enabling ingress will expose your Elasticsearch instance
+# to the public internet, and as such is disabled by default.
+#
+# Each Cloud Service Provider has different requirements for setting up Ingress. Some links to common documentation are:
+# - AWS:   https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html
+# - GCP:   https://cloud.google.com/kubernetes-engine/docs/concepts/ingress
+# - Azure: https://learn.microsoft.com/en-us/azure/aks/app-routing
+# - Nginx: https://kubernetes.github.io/ingress-nginx/
+#
+ingress:
+  enabled: false
+
+  # Annotations that will be applied to the Ingress resource. Note that some ingress controllers are controlled via annotations.
+  # 
+  # Nginx Annotations: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/
+  #
+  # Common annotations:
+  #   kubernetes.io/ingress.class: gce          # Configures the Ingress resource to use the GCE ingress controller and create an external Application Load Balancer.
+  #   kubernetes.io/ingress.class: gce-internal # Configures the Ingress resource to use the GCE ingress controller and create an internal Application Load Balancer.
+  #   kubernetes.io/ingress.class: nginx        # Configures the Ingress resource to use the NGINX ingress controller.
+  #
+  annotations: {}
+
+  # Labels that will be applied to the Ingress resource.
+  #
+  labels: {}
+
+  # Some ingress controllers require the use of a specific class name to route traffic to the correct controller, notably AKS and EKS, which
+  # replaces the use of the 'kubernetes.io/ingress.class' annotation.
+  #
+  # className: webapprouting.kubernetes.azure.com | alb
+
+  # Ingress paths are required to have a corresponding path type. Defaults to 'Prefix'.
+  #
+  # There are 3 supported path types:
+  # - ImplementationSpecific
+  # - Prefix
+  # - Exact
+  #
+  # ref: https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types
+  #
+  pathType: Prefix
+
+  # Hosts are a list of hosts included in the Ingress definition, with a corresponding path at which the default Elasticsearch service
+  # will be exposed. Each host in the list should be a fully qualified DNS name that will resolve to the exposed Ingress object.
+  #
+  # ref: https://kubernetes.io/docs/concepts/services-networking/ingress/#name-based-virtual-hosting
+  #
+  hosts:
+    - host: chart-example.local
+      path: /
+
+  # TLS defines whether TLS will be enabled on the Ingress resource.
+  #
+  # *NOTE* Many Cloud Service Providers handle TLS in a custom manner, and as such, it is recommended to consult their documentation.
+  # Notably GKE and Nginx Ingress Controllers seems to respect the Ingress TLS settings, AKS and EKS ignore it.
+  #
+  # - AKS:   https://learn.microsoft.com/en-us/azure/aks/app-routing-dns-ssl
+  # - GKE:   https://cloud.google.com/kubernetes-engine/docs/concepts/ingress#options_for_providing_ssl_certificates
+  # - EKS:   https://aws.amazon.com/blogs/containers/serve-distinct-domains-with-tls-powered-by-acm-on-amazon-eks/
+  # - Nginx: https://kubernetes.github.io/ingress-nginx/user-guide/tls/
+  #
+  # Kubernetes ingress TLS documentation:
+  # ref: https://kubernetes.io/docs/concepts/services-networking/ingress/#tls
+  #
+  tls:
+    enabled: false
+    # Optional Kubernetes secret name that contains a base64 encoded PEM certificate and private key that corresponds to the above 'hosts' definitions.
+    # If tls is enabled, but this field is not set, the self-signed certificate and key created by the ECK operator will be used.
+    # secretName: chart-example-tls

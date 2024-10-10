@@ -10,6 +10,14 @@ metadata:
     description: Run Elasticsearch, Kibana, APM Server, Beats, Enterprise Search, Elastic Agent, Elastic Maps Server and Logstash on Kubernetes and OpenShift
     repository: https://github.com/elastic/cloud-on-k8s
     support: elastic.co
+    operators.openshift.io/valid-subscription: "Elastic Basic license"
+    features.operators.openshift.io/disconnected: "false"
+    features.operators.openshift.io/fips-compliant: "false"
+    features.operators.openshift.io/proxy-aware: "false"
+    features.operators.openshift.io/tls-profiles: "false"
+    features.operators.openshift.io/token-auth-aws: "false"
+    features.operators.openshift.io/token-auth-azure: "false"
+    features.operators.openshift.io/token-auth-gcp: "false"
     alm-examples: |-
       [
           {
@@ -276,9 +284,9 @@ spec:
     Supported versions:
 
 
-    * Kubernetes 1.24-1.27
+    * Kubernetes 1.26-1.30
 
-    * OpenShift 4.9-4.13
+    * OpenShift 4.12-4.17
 
     * Google Kubernetes Engine (GKE), Azure Kubernetes Service (AKS), and Amazon Elastic Kubernetes Service (EKS)
 
@@ -390,6 +398,9 @@ spec:
   minKubeVersion: 1.21.0
   provider:
     name: Elastic
+  relatedImages:
+  - name: eck-operator
+    image: {{ .OperatorRepo }}{{ .Tag }}
   replaces: {{ .PackageName }}.v{{ .PrevVersion }}
   version: {{ .NewVersion }}
   webhookdefinitions:

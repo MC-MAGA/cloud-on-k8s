@@ -41,8 +41,8 @@ import (
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/enterprisesearch"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash"
+	kblabel "github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana/label"
+	lslabels "github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash/labels"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/maps"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
@@ -356,7 +356,7 @@ func (k *K8sClient) CheckSecretsRemoved(secretRefs []types.NamespacedName) error
 }
 
 // CreateOrUpdateSecrets creates the given secrets, or updates them if they already exist.
-func (k K8sClient) CreateOrUpdateSecrets(secrets ...corev1.Secret) error {
+func (k *K8sClient) CreateOrUpdateSecrets(secrets ...corev1.Secret) error {
 	for i := range secrets {
 		if err := k.CreateOrUpdate(&secrets[i]); err != nil {
 			return err
@@ -374,7 +374,7 @@ func (k *K8sClient) DeleteSecrets(secrets ...corev1.Secret) error {
 	return nil
 }
 
-func (k K8sClient) CreateOrUpdate(objs ...k8sclient.Object) error {
+func (k *K8sClient) CreateOrUpdate(objs ...k8sclient.Object) error {
 	for _, obj := range objs {
 		// create a copy to ensure that the original object is not modified
 		obj := k8s.DeepCopyObject(obj)
@@ -415,7 +415,7 @@ func ESPodListOptionsByNodeSet(esNamespace, esName, nodeSetName string) []k8scli
 func KibanaPodListOptions(kbNamespace, kbName string) []k8sclient.ListOption {
 	ns := k8sclient.InNamespace(kbNamespace)
 	matchLabels := k8sclient.MatchingLabels(map[string]string{
-		kibana.KibanaNameLabelName: kbName,
+		kblabel.KibanaNameLabelName: kbName,
 	})
 	return []k8sclient.ListOption{ns, matchLabels}
 }
@@ -450,8 +450,8 @@ func AgentPodListOptions(agentNamespace, agentName string) []k8sclient.ListOptio
 func LogstashPodListOptions(logstashNamespace, logstashName string) []k8sclient.ListOption {
 	ns := k8sclient.InNamespace(logstashNamespace)
 	matchLabels := k8sclient.MatchingLabels(map[string]string{
-		commonv1.TypeLabelName: logstash.TypeLabelValue,
-		logstash.NameLabelName: logstashName,
+		commonv1.TypeLabelName: lslabels.TypeLabelValue,
+		lslabels.NameLabelName: logstashName,
 	})
 	return []k8sclient.ListOption{ns, matchLabels}
 }
@@ -520,7 +520,7 @@ func OnAllPods(pods []corev1.Pod, f func(corev1.Pod) error) error {
 }
 
 // GetFirstNodeExternalIP gets the external IP address of the first k8s node in the current k8s cluster.
-func (k K8sClient) GetFirstNodeExternalIP() (string, error) {
+func (k *K8sClient) GetFirstNodeExternalIP() (string, error) {
 	var nodes corev1.NodeList
 	if err := k.Client.List(context.Background(), &nodes); err != nil {
 		return "", err

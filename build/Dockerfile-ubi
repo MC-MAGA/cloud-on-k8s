@@ -1,5 +1,5 @@
 # Build the operator binary
-FROM docker.io/library/golang:1.20.7 as builder
+FROM docker.elastic.co/wolfi/go:1.23.2@sha256:f338e203c90f7e084b2eb146c91cd1118fa2a79ea1729bf24d793fe5c01987ce as builder
 
 ARG VERSION
 ARG SHA1
@@ -27,10 +27,10 @@ RUN --mount=type=cache,mode=0755,target=/go/pkg/mod \
 
 # ---------------------------------------------
 # Copy the operator binary into a lighter image
-FROM registry.access.redhat.com/ubi8/ubi-minimal:8.8-1014
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4-1227.1726694542
 
 # Update the base image packages to the latest versions
-RUN microdnf update --setopt=tsflags=nodocs && microdnf clean all
+RUN microdnf update --setopt=tsflags=nodocs --assumeyes && microdnf clean all
 
 ARG VERSION
 

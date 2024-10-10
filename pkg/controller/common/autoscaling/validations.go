@@ -106,6 +106,7 @@ func ValidateAutoscalingPolicies(
 ) field.ErrorList {
 	var errs field.ErrorList
 	policyNames := set.Make()
+	mlPolicyCount := 0
 	rolesSet := make([][]string, 0, len(autoscalingPolicies))
 	for i, autoscalingSpec := range autoscalingPolicies {
 		// The name field is mandatory.
@@ -122,7 +123,7 @@ func ValidateAutoscalingPolicies(
 		}
 
 		// Validate the set of roles managed by this autoscaling policy.
-		if autoscalingSpec.Roles == nil || len(autoscalingSpec.Roles) == 0 {
+		if len(autoscalingSpec.Roles) == 0 {
 			errs = append(errs, field.Required(autoscalingSpecPath(i, "roles"), "roles field is mandatory and must not be empty"))
 		} else {
 			if containsStringSlice(rolesSet, autoscalingSpec.Roles) {
@@ -139,8 +140,22 @@ func ValidateAutoscalingPolicies(
 			}
 		}
 
+		if stringsutil.StringInSlice(string(esv1.MLRole), autoscalingSpec.Roles) {
+			mlPolicyCount++
+		}
+
+		if mlPolicyCount > 1 {
+			errs = append(
+				errs,
+				field.Invalid(
+					autoscalingSpecPath(i, "name"), strings.Join(autoscalingSpec.Roles, ","),
+					"ML nodes must be in a dedicated NodeSet",
+				),
+			)
+		}
+
 		// Machine learning nodes must be in a dedicated tier.
-		if stringsutil.StringInSlice(string(esv1.MLRole), autoscalingSpec.Roles) && len(autoscalingSpec.Roles) > 1 {
+		if stringsutil.StringInSlice(string(esv1.MLRole), autoscalingSpec.Roles) && len(ignoreRemoteClusterClientRole(autoscalingSpec.Roles)) > 1 {
 			errs = append(
 				errs,
 				field.Invalid(
@@ -188,7 +203,19 @@ func ValidateAutoscalingPolicies(
 		// Validate storage
 		errs = validateQuantities(errs, autoscalingSpecPath, autoscalingSpec.StorageRange, i, "storage", minStorage)
 	}
+
 	return errs
+}
+
+// ignoreRemoteClusterClientRole will ignore the 'remote_cluster_client' role in a given slice of roles.
+func ignoreRemoteClusterClientRole(roles []string) []string {
+	var updatedRoles []string
+	for _, role := range roles {
+		if role != string(esv1.RemoteClusterClientRole) {
+			updatedRoles = append(updatedRoles, role)
+		}
+	}
+	return updatedRoles
 }
 
 // validateQuantities ensures that a quantity range is valid.

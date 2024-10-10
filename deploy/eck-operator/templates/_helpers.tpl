@@ -96,6 +96,8 @@ Determine the name for the webhook secret
 {{- define "eck-operator.webhookSecretName" -}}
 {{- if .Values.global.manifestGen -}}
 elastic-webhook-server-cert
+{{- else if .Values.webhook.certsSecret -}}
+{{- .Values.webhook.certsSecret }}
 {{- else -}}
 {{- $name := include "eck-operator.name" . -}}
 {{ printf "%s-webhook-cert" $name | trunc 63 }}
@@ -111,6 +113,19 @@ elastic-webhook-server
 {{- else -}}
 {{- $name := include "eck-operator.name" . -}}
 {{ printf "%s-webhook" $name | trunc 63 }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Determine the metrics port
+*/}}
+{{- define "eck-operator.metrics.port" -}}
+{{- if .Values.config.metrics.port -}}
+{{- .Values.config.metrics.port -}}
+{{- else if .Values.config.metricsPort -}}
+{{- .Values.config.metricsPort -}}
+{{- else -}}
+0
 {{- end -}}
 {{- end -}}
 

@@ -6,14 +6,14 @@ metadata:
   labels:
     {{- include "beat.labels" . | nindent 4 }}
   annotations:
-    eck.k8s.elastic.co/license: enterprise
+    eck.k8s.elastic.co/license: basic
     {{- with .Values.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   version: {{ required "A Beat version is required" .Values.version }}
-  type: {{ required "A Beat type is required" .Values.spec.type }}
   {{- if and (not (hasKey .Values.spec "daemonSet")) (not (hasKey .Values.spec "deployment")) }}
   {{ fail "At least one of daemonSet or deployment is required for a functional Beat" }}
   {{- end }}
+  {{- if not .Values.spec.type }}{{ fail "A Beat type is required" }}{{- end }}
   {{- toYaml .Values.spec | nindent 2 }}

@@ -6,35 +6,37 @@ package nodespec
 
 import (
 	"context"
-	"path"
-	"sort"
+	"encoding/json"
+	"errors"
 	"testing"
 
-	"github.com/go-test/deep"
+	"github.com/gkampitakis/go-snaps/snaps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ptr "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/defaults"
+	policyv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/stackconfigpolicy/v1alpha1"
+	commonannotation "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/annotation"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	common "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/initcontainer"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/user"
-	esvolume "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/pointer"
 )
 
 type esSampleBuilder struct {
 	userConfig              map[string]interface{}
 	esAdditionalAnnotations map[string]string
 	keystoreResources       *keystore.Resources
+	transportCertsDisabled  bool
+	version                 string
 }
 
 func newEsSampleBuilder() *esSampleBuilder {
@@ -49,7 +51,16 @@ func (esb *esSampleBuilder) build() esv1.Elasticsearch {
 	if esb.userConfig != nil {
 		es.Spec.NodeSets[0].Config = &commonv1.Config{Data: esb.userConfig}
 	}
+	if esb.version != "" {
+		es.Spec.Version = esb.version
+	}
+	es.Spec.Transport.TLS.SelfSignedCertificates = &esv1.SelfSignedTransportCertificates{Disabled: esb.transportCertsDisabled}
 	return *es
+}
+
+func (esb *esSampleBuilder) withVersion(version string) *esSampleBuilder {
+	esb.version = version
+	return esb
 }
 
 func (esb *esSampleBuilder) withUserConfig(userConfig map[string]interface{}) *esSampleBuilder {
@@ -64,6 +75,11 @@ func (esb *esSampleBuilder) addEsAnnotations(esAnnotations map[string]string) *e
 
 func (esb *esSampleBuilder) withKeystoreResources(keystoreResources *keystore.Resources) *esSampleBuilder {
 	esb.keystoreResources = keystoreResources
+	return esb
+}
+
+func (esb *esSampleBuilder) withTransportCertsDisabled(disabled bool) *esSampleBuilder {
+	esb.transportCertsDisabled = disabled
 	return esb
 }
 
@@ -151,8 +167,8 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			name:                "pre-8.0, setting off, user context",
 			version:             version.MustParse("7.8.0"),
 			setDefaultFSGroup:   false,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "pre-8.0, setting on, no user context",
@@ -165,8 +181,8 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			name:                "pre-8.0, setting on, user context",
 			version:             version.MustParse("7.8.0"),
 			setDefaultFSGroup:   true,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "8.0+, setting off, no user context",
@@ -179,22 +195,22 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			name:                "8.0+, setting off, user context",
 			version:             version.MustParse("8.0.0"),
 			setDefaultFSGroup:   false,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "8.0+, setting on, no user context",
 			version:             version.MustParse("8.0.0"),
 			setDefaultFSGroup:   true,
 			userSecurityContext: nil,
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(1000)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](1000)},
 		},
 		{
 			name:                "8.0+, setting on, user context",
 			version:             version.MustParse("8.0.0"),
 			setDefaultFSGroup:   true,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "8.0+, setting on, empty user context",
@@ -209,11 +225,11 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			es.Spec.Version = tt.version.String()
 			es.Spec.NodeSets[0].PodTemplate.Spec.SecurityContext = tt.userSecurityContext
 
-			cfg, err := settings.NewMergedESConfig(es.Name, tt.version, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config)
+			cfg, err := settings.NewMergedESConfig(es.Name, tt.version, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config, nil)
 			require.NoError(t, err)
 
 			client := k8s.NewFakeClient(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: es.Namespace, Name: esv1.ScriptsConfigMap(es.Name)}})
-			actual, err := BuildPodTemplateSpec(context.Background(), client, es, es.Spec.NodeSets[0], cfg, nil, tt.setDefaultFSGroup)
+			actual, err := BuildPodTemplateSpec(context.Background(), client, es, es.Spec.NodeSets[0], cfg, nil, tt.setDefaultFSGroup, PolicyConfig{})
 			require.NoError(t, err)
 			require.Equal(t, tt.wantSecurityContext, actual.Spec.SecurityContext)
 		})
@@ -221,150 +237,101 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 }
 
 func TestBuildPodTemplateSpec(t *testing.T) {
+	// 7.20 fixtures
 	sampleES := newEsSampleBuilder().build()
-	nodeSet := sampleES.Spec.NodeSets[0]
-	ver, err := version.Parse(sampleES.Spec.Version)
-	require.NoError(t, err)
-	cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *nodeSet.Config)
-	require.NoError(t, err)
-
-	client := k8s.NewFakeClient(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: sampleES.Namespace, Name: esv1.ScriptsConfigMap(sampleES.Name)}})
-	actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false)
-	require.NoError(t, err)
-
-	// build expected PodTemplateSpec
-
-	terminationGracePeriodSeconds := DefaultTerminationGracePeriodSeconds
-	varFalse := false
-
-	volumes, volumeMounts := buildVolumes(sampleES.Name, ver, nodeSet, nil, volume.DownwardAPI{})
-	// should be sorted
-	sort.Slice(volumes, func(i, j int) bool { return volumes[i].Name < volumes[j].Name })
-	sort.Slice(volumeMounts, func(i, j int) bool { return volumeMounts[i].Name < volumeMounts[j].Name })
-
-	initContainers, err := initcontainer.NewInitContainers(transportCertificatesVolume(sampleES.Name), nil, nil)
-	require.NoError(t, err)
-	// init containers should be patched with volume and inherited env vars and image
-	// init container env vars come in a slightly different order than main container ones which is an artefact of how the pod template builder works
-	initContainerEnv := defaults.ExtendPodDownwardEnvVars(
-		[]corev1.EnvVar{
-			{Name: "my-env", Value: "my-value"},
-			{Name: settings.EnvProbePasswordPath, Value: path.Join(esvolume.PodMountedUsersSecretMountPath, user.ProbeUserName)},
-			{Name: settings.EnvProbeUsername, Value: user.ProbeUserName},
-			{Name: settings.EnvReadinessProbeProtocol, Value: sampleES.Spec.HTTP.Protocol()},
-			{Name: settings.HeadlessServiceName, Value: HeadlessServiceName(esv1.StatefulSet(sampleES.Name, nodeSet.Name))},
-			{Name: "NSS_SDB_USE_CACHE", Value: "no"},
-		}...,
-	)
-	esDockerImage := "docker.elastic.co/elasticsearch/elasticsearch:7.2.0"
-	for i := range initContainers {
-		initContainers[i].Image = esDockerImage
-		initContainers[i].Env = initContainerEnv
-		initContainers[i].VolumeMounts = append(initContainers[i].VolumeMounts, volumeMounts...)
-		initContainers[i].Resources = DefaultResources
-		initContainers[i].SecurityContext = &corev1.SecurityContext{
-			Privileged:               ptr.Bool(false),
-			ReadOnlyRootFilesystem:   ptr.Bool(false),
-			AllowPrivilegeEscalation: ptr.Bool(false),
-		}
-	}
-
-	// remove the prepare-fs init-container from comparison, it has its own volume mount logic
-	// that is harder to test
-	for i, c := range initContainers {
-		if c.Name == initcontainer.PrepareFilesystemContainerName {
-			initContainers = append(initContainers[:i], initContainers[i+1:]...)
-		}
-	}
-	for i, c := range actual.Spec.InitContainers {
-		if c.Name == initcontainer.PrepareFilesystemContainerName {
-			actual.Spec.InitContainers = append(actual.Spec.InitContainers[:i], actual.Spec.InitContainers[i+1:]...)
-		}
-	}
-
-	expected := corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				"common.k8s.elastic.co/type":                    "elasticsearch",
-				"elasticsearch.k8s.elastic.co/cluster-name":     "name",
-				"elasticsearch.k8s.elastic.co/http-scheme":      "https",
-				"elasticsearch.k8s.elastic.co/node-data":        "false",
-				"elasticsearch.k8s.elastic.co/node-ingest":      "true",
-				"elasticsearch.k8s.elastic.co/node-master":      "true",
-				"elasticsearch.k8s.elastic.co/node-ml":          "true",
-				"elasticsearch.k8s.elastic.co/statefulset-name": "name-es-nodeset-1",
-				"elasticsearch.k8s.elastic.co/version":          "7.2.0",
-				"pod-template-label-name":                       "pod-template-label-value",
-			},
-			Annotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "3893049321",
-				"pod-template-annotation-name":             "pod-template-annotation-value",
-				"co.elastic.logs/module":                   "elasticsearch",
-			},
+	policyEsConfig := common.MustCanonicalConfig(map[string]interface{}{
+		"logger.org.elasticsearch.discovery": "DEBUG",
+	})
+	secretMounts := []policyv1alpha1.SecretMount{{
+		SecretName: "test-es-secretname",
+		MountPath:  "/usr/test",
+	}}
+	elasticsearchConfigAndMountsHash := hash.HashObject([]interface{}{policyEsConfig, secretMounts})
+	policyConfig := PolicyConfig{
+		ElasticsearchConfig: policyEsConfig,
+		AdditionalVolumes: []volume.VolumeLike{
+			volume.NewSecretVolumeWithMountPath("test-es-secretname", "test-es-secretname", "/usr/test"),
 		},
-		Spec: corev1.PodSpec{
-			Volumes: volumes,
-			InitContainers: append(initContainers, corev1.Container{
-				Name:         "additional-init-container",
-				Image:        esDockerImage,
-				Env:          initContainerEnv,
-				VolumeMounts: volumeMounts,
-				Resources:    DefaultResources, // inherited from main container
-				SecurityContext: &corev1.SecurityContext{
-					Privileged: ptr.Bool(false),
-					// ReadOnlyRootFilesystem is expected to be false in this test because there is no data volume.
-					ReadOnlyRootFilesystem:   ptr.Bool(false),
-					AllowPrivilegeEscalation: ptr.Bool(false),
-				},
-			}),
-			Containers: []corev1.Container{
-				{
-					Name: "additional-container",
-					SecurityContext: &corev1.SecurityContext{
-						Privileged:               ptr.Bool(false),
-						ReadOnlyRootFilesystem:   ptr.Bool(false),
-						AllowPrivilegeEscalation: ptr.Bool(false),
-					},
-				},
-				{
-					Name:  "elasticsearch",
-					Image: esDockerImage,
-					Ports: []corev1.ContainerPort{
-						{Name: "https", HostPort: 0, ContainerPort: 9200, Protocol: "TCP", HostIP: ""},
-						{Name: "transport", HostPort: 0, ContainerPort: 9300, Protocol: "TCP", HostIP: ""},
-					},
-					Env: append(
-						[]corev1.EnvVar{{Name: "my-env", Value: "my-value"}},
-						DefaultEnvVars(sampleES.Spec.HTTP, HeadlessServiceName(esv1.StatefulSet(sampleES.Name, nodeSet.Name)))...),
-					Resources:      DefaultResources,
-					VolumeMounts:   volumeMounts,
-					ReadinessProbe: NewReadinessProbe(),
-					Lifecycle: &corev1.Lifecycle{
-						PreStop: NewPreStopHook(),
-					},
-					SecurityContext: &corev1.SecurityContext{
-						Privileged:               ptr.Bool(false),
-						ReadOnlyRootFilesystem:   ptr.Bool(false),
-						AllowPrivilegeEscalation: ptr.Bool(false),
-					},
-				},
+		PolicyAnnotations: map[string]string{
+			commonannotation.ElasticsearchConfigAndSecretMountsHashAnnotation: elasticsearchConfigAndMountsHash,
+		},
+	}
+	// shared fixture
+	scriptsConfigMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: sampleES.Namespace, Name: esv1.ScriptsConfigMap(sampleES.Name)}}
+
+	type args struct {
+		client                    k8s.Client
+		es                        esv1.Elasticsearch
+		keystoreResources         *keystore.Resources
+		setDefaultSecurityContext bool
+		policyConfig              PolicyConfig
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "v7.20",
+			args: args{
+				client:                    k8s.NewFakeClient(scriptsConfigMap),
+				es:                        sampleES,
+				keystoreResources:         &keystore.Resources{},
+				setDefaultSecurityContext: false,
+				policyConfig:              policyConfig,
 			},
-			TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
-			AutomountServiceAccountToken:  &varFalse,
-			Affinity:                      DefaultAffinity(sampleES.Name),
+			wantErr: false,
+		},
+		{
+			name: "v8.14.0",
+			args: args{
+				client: k8s.NewFakeClient(scriptsConfigMap),
+				es:     newEsSampleBuilder().withVersion("8.14.0").build(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "failing client",
+			args: args{
+				client: k8s.NewFailingClient(errors.New("should fail")),
+				es:     newEsSampleBuilder().withVersion("8.14.0").build(),
+			},
+			wantErr: true,
 		},
 	}
 
-	deep.MaxDepth = 25
-	require.Nil(t, deep.Equal(expected, actual))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			es := tt.args.es
+			nodeSet := es.Spec.NodeSets[0]
+
+			ver, err := version.Parse(es.Spec.Version)
+			require.NoError(t, err)
+
+			cfg, err := settings.NewMergedESConfig(es.Name, ver, corev1.IPv4Protocol, es.Spec.HTTP, *nodeSet.Config, tt.args.policyConfig.ElasticsearchConfig)
+			require.NoError(t, err)
+
+			actual, err := BuildPodTemplateSpec(context.Background(), tt.args.client, es, es.Spec.NodeSets[0], cfg, tt.args.keystoreResources, tt.args.setDefaultSecurityContext, tt.args.policyConfig)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("BuildPodTemplateSpec wantErr %v got %v", tt.wantErr, err)
+			}
+
+			// render as JSON for easier diff debugging
+			gotJSON, err := json.MarshalIndent(&actual, " ", " ")
+			require.NoError(t, err)
+			snaps.MatchJSON(t, gotJSON)
+		})
+	}
 }
 
 func Test_buildAnnotations(t *testing.T) {
 	type args struct {
-		cfg               map[string]interface{}
-		esAnnotations     map[string]string
-		keystoreResources *keystore.Resources
-		scriptsVersion    string
+		cfg                    map[string]interface{}
+		esAnnotations          map[string]string
+		keystoreResources      *keystore.Resources
+		scriptsContent         string
+		policyAnnotations      map[string]string
+		transportCertsDisabled bool
 	}
 	tests := []struct {
 		name                string
@@ -375,7 +342,7 @@ func Test_buildAnnotations(t *testing.T) {
 		{
 			name: "Sample Elasticsearch resource",
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "533641620",
+				"elasticsearch.k8s.elastic.co/config-hash": "3089472956",
 			},
 		},
 		{
@@ -388,7 +355,7 @@ func Test_buildAnnotations(t *testing.T) {
 				},
 			},
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "3131886472",
+				"elasticsearch.k8s.elastic.co/config-hash": "1067885408",
 			},
 		},
 		{
@@ -397,7 +364,7 @@ func Test_buildAnnotations(t *testing.T) {
 				esAnnotations: map[string]string{"eck.k8s.elastic.co/downward-node-labels": "topology.kubernetes.io/zone"},
 			},
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "757126536",
+				"elasticsearch.k8s.elastic.co/config-hash": "3370858576",
 			},
 		},
 		{
@@ -406,54 +373,80 @@ func Test_buildAnnotations(t *testing.T) {
 				esAnnotations: map[string]string{"eck.k8s.elastic.co/downward-node-labels": "topology.kubernetes.io/zone,topology.kubernetes.io/region"},
 			},
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "3605766330",
+				"elasticsearch.k8s.elastic.co/config-hash": "909392898",
 			},
 		},
 		{
-			name: "With keystore and scripts version",
+			name: "With keystore and scripts content",
 			args: args{
 				keystoreResources: &keystore.Resources{
-					Version: "42",
+					Hash: "42",
 				},
-				scriptsVersion: "84",
+				scriptsContent: "scripts content",
 			},
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "1607725946",
+				"elasticsearch.k8s.elastic.co/config-hash": "4033676039",
 			},
 		},
 		{
 			name: "With another keystore version",
 			args: args{
 				keystoreResources: &keystore.Resources{
-					Version: "43",
+					Hash: "43",
 				},
-				scriptsVersion: "84",
+				scriptsContent: "scripts content",
 			},
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "1624503565",
+				"elasticsearch.k8s.elastic.co/config-hash": "4016898420",
 			},
 		},
 		{
 			name: "With another script version",
 			args: args{
 				keystoreResources: &keystore.Resources{
-					Version: "42",
+					Hash: "42",
 				},
-				scriptsVersion: "85",
+				scriptsContent: "another scripts content",
 			},
 			expectedAnnotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "3194693445",
+				"elasticsearch.k8s.elastic.co/config-hash": "3413674748",
 			},
+		},
+		{
+			name: "With policy annotations",
+			args: args{
+				policyAnnotations: map[string]string{
+					commonannotation.ElasticsearchConfigAndSecretMountsHashAnnotation: "testhash",
+				},
+			},
+			expectedAnnotations: map[string]string{
+				commonannotation.ElasticsearchConfigAndSecretMountsHashAnnotation: "testhash",
+			},
+		},
+		{
+			name: "with transport certs disabled",
+			args: args{
+				transportCertsDisabled: true,
+			},
+			expectedAnnotations: map[string]string{
+				"elasticsearch.k8s.elastic.co/self-signed-transport-cert-disabled": "true",
+			},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			es := newEsSampleBuilder().withKeystoreResources(tt.args.keystoreResources).withUserConfig(tt.args.cfg).addEsAnnotations(tt.args.esAnnotations).build()
+			es := newEsSampleBuilder().
+				withKeystoreResources(tt.args.keystoreResources).
+				withUserConfig(tt.args.cfg).
+				addEsAnnotations(tt.args.esAnnotations).
+				withTransportCertsDisabled(tt.args.transportCertsDisabled).
+				build()
 			ver, err := version.Parse(sampleES.Spec.Version)
 			require.NoError(t, err)
-			cfg, err := settings.NewMergedESConfig(es.Name, ver, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config)
+			cfg, err := settings.NewMergedESConfig(es.Name, ver, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config, nil)
 			require.NoError(t, err)
-			got := buildAnnotations(es, cfg, tt.args.keystoreResources, tt.args.scriptsVersion)
+			got := buildAnnotations(es, cfg, tt.args.keystoreResources, tt.args.scriptsContent, tt.args.policyAnnotations)
 
 			for expectedAnnotation, expectedValue := range tt.expectedAnnotations {
 				actualValue, exists := got[expectedAnnotation]
@@ -548,10 +541,10 @@ func Test_enableLog4JFormatMsgNoLookups(t *testing.T) {
 
 			ver, err := version.Parse(sampleES.Spec.Version)
 			require.NoError(t, err)
-			cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *sampleES.Spec.NodeSets[0].Config)
+			cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *sampleES.Spec.NodeSets[0].Config, nil)
 			require.NoError(t, err)
 			client := k8s.NewFakeClient(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: sampleES.Namespace, Name: esv1.ScriptsConfigMap(sampleES.Name)}})
-			actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false)
+			actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false, PolicyConfig{})
 			require.NoError(t, err)
 
 			env := actual.Spec.Containers[1].Env
@@ -563,4 +556,17 @@ func Test_enableLog4JFormatMsgNoLookups(t *testing.T) {
 			assert.Equal(t, tc.expectedEsJavaOptsEnvValue, envMap[settings.EnvEsJavaOpts])
 		})
 	}
+}
+
+func Test_getScriptsConfigMapContent(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		Data: map[string]string{
+			PreStopHookScriptConfigKey:             "value1#",
+			initcontainer.PrepareFsScriptConfigKey: "value2#",
+			LegacyReadinessProbeScriptConfigKey:    "value3#",
+			initcontainer.SuspendScriptConfigKey:   "value4#",
+			initcontainer.SuspendedHostsFile:       "value5#",
+		},
+	}
+	assert.Equal(t, "value1#value2#value3#value4#", getScriptsConfigMapContent(cm))
 }

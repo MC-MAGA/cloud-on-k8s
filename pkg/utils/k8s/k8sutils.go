@@ -74,6 +74,11 @@ func IsPodReady(pod corev1.Pod) bool {
 	return conditionsTrue == 2
 }
 
+// IsPodRunning returns true if the Pod is in phase running and not terminating.
+func IsPodRunning(pod corev1.Pod) bool {
+	return pod.DeletionTimestamp.IsZero() && pod.Status.Phase == corev1.PodRunning
+}
+
 // TerminatingPods filters pods for Pods that are in the process of (graceful) termination.
 func TerminatingPods(pods []corev1.Pod) []corev1.Pod {
 	var terminating []corev1.Pod //nolint:prealloc
@@ -84,6 +89,17 @@ func TerminatingPods(pods []corev1.Pod) []corev1.Pod {
 		terminating = append(terminating, p)
 	}
 	return terminating
+}
+
+// RunningPods filters pods for Pods that are running (and not terminating).
+func RunningPods(pods []corev1.Pod) []corev1.Pod {
+	var running []corev1.Pod
+	for _, p := range pods {
+		if IsPodRunning(p) {
+			running = append(running, p)
+		}
+	}
+	return running
 }
 
 // PodsByName returns a map of pod names to pods
@@ -235,7 +251,7 @@ type StorageComparison struct {
 
 // CompareStorageRequests compares storage requests in the given resource requirements.
 // It returns a zero-ed StorageComparison in case one of the requests is zero (value not set: comparison not possible).
-func CompareStorageRequests(initial corev1.ResourceRequirements, updated corev1.ResourceRequirements) StorageComparison {
+func CompareStorageRequests(initial corev1.VolumeResourceRequirements, updated corev1.VolumeResourceRequirements) StorageComparison {
 	initialSize := initial.Requests.Storage()
 	updatedSize := updated.Requests.Storage()
 	if initialSize.IsZero() || updatedSize.IsZero() {

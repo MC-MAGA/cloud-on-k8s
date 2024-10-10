@@ -14,6 +14,7 @@ import (
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	common "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 )
 
@@ -36,12 +37,17 @@ func TestNewMergedESConfig(t *testing.T) {
 		} `yaml:"network"`
 	}
 
+	policyCfg := common.MustCanonicalConfig(map[string]interface{}{
+		esv1.DiscoverySeedProviders: "policy-override",
+	})
+
 	tests := []struct {
-		name     string
-		version  string
-		ipFamily corev1.IPFamily
-		cfgData  map[string]interface{}
-		assert   func(cfg CanonicalConfig)
+		name          string
+		version       string
+		ipFamily      corev1.IPFamily
+		cfgData       map[string]interface{}
+		policyCfgData *common.CanonicalConfig
+		assert        func(cfg CanonicalConfig)
 	}{
 		{
 			name:     "in 6.x, empty config should have the default file and native realm settings configured",
@@ -176,6 +182,24 @@ func TestNewMergedESConfig(t *testing.T) {
 			},
 		},
 		{
+			name:     "prior to 8.2.0 we should not enable the readiness.port",
+			version:  "8.1.0",
+			ipFamily: corev1.IPv4Protocol,
+			cfgData:  map[string]interface{}{},
+			assert: func(cfg CanonicalConfig) {
+				require.Equal(t, 0, len(cfg.HasKeys([]string{esv1.ReadinessPort})))
+			},
+		},
+		{
+			name:     "starting 8.2.0 we should enable the readiness.port",
+			version:  "8.2.0",
+			ipFamily: corev1.IPv4Protocol,
+			cfgData:  map[string]interface{}{},
+			assert: func(cfg CanonicalConfig) {
+				require.Equal(t, 1, len(cfg.HasKeys([]string{esv1.ReadinessPort})))
+			},
+		},
+		{
 			name:     "user-provided Elasticsearch config overrides should have precedence over ECK config",
 			version:  "7.6.0",
 			ipFamily: corev1.IPv4Protocol,
@@ -192,6 +216,27 @@ func TestNewMergedESConfig(t *testing.T) {
 				require.Equal(t, "${POD_NAME}.${HEADLESS_SERVICE_NAME}.${NAMESPACE}.svc", esCfg.HTTP.PublishHost)
 				// but has been overridden
 				require.Equal(t, "something-else", esCfg.Discovery.SeedProviders)
+				require.Equal(t, 1, bytes.Count(cfgBytes, []byte("seed_providers:")))
+			},
+		},
+		{
+			name:     "Elasticsearch config overrides from policy should have precedence over default config",
+			version:  "7.6.0",
+			ipFamily: corev1.IPv4Protocol,
+			cfgData: map[string]interface{}{
+				esv1.DiscoverySeedProviders: "something-else",
+			},
+			policyCfgData: policyCfg,
+			assert: func(cfg CanonicalConfig) {
+				cfgBytes, err := cfg.Render()
+				require.NoError(t, err)
+				esCfg := &elasticsearchCfg{}
+				require.NoError(t, yaml.Unmarshal(cfgBytes, &esCfg))
+				// default config is still there
+				require.Equal(t, "${POD_IP}", esCfg.Network.PublishHost)
+				require.Equal(t, "${POD_NAME}.${HEADLESS_SERVICE_NAME}.${NAMESPACE}.svc", esCfg.HTTP.PublishHost)
+				// but has been overridden
+				require.Equal(t, "policy-override", esCfg.Discovery.SeedProviders)
 				require.Equal(t, 1, bytes.Count(cfgBytes, []byte("seed_providers:")))
 			},
 		},
@@ -214,7 +259,7 @@ func TestNewMergedESConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ver, err := version.Parse(tt.version)
 			require.NoError(t, err)
-			cfg, err := NewMergedESConfig("clusterName", ver, tt.ipFamily, commonv1.HTTPConfig{}, commonv1.Config{Data: tt.cfgData})
+			cfg, err := NewMergedESConfig("clusterName", ver, tt.ipFamily, commonv1.HTTPConfig{}, commonv1.Config{Data: tt.cfgData}, tt.policyCfgData)
 			require.NoError(t, err)
 			tt.assert(cfg)
 		})

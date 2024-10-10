@@ -1,7 +1,4 @@
 testParams:
-  - name: v180
-    operatorVersion: 1.8.0
-    stackVersion: 7.16.3
   - name: v191
     operatorVersion: 1.9.1
     stackVersion: 7.17.8
@@ -28,13 +25,28 @@ testParams:
     stackVersion: 8.6.2
   - name: v270
     operatorVersion: 2.7.0
-    stackVersion: 8.7.0
+    stackVersion: 8.7.1
   - name: v280
     operatorVersion: 2.8.0
-    stackVersion: 8.8.0
+    stackVersion: 8.8.2
   - name: v290
     operatorVersion: 2.9.0
-    stackVersion: 8.9.0
+    stackVersion: 8.9.2
+  - name: v2100
+    operatorVersion: 2.10.0
+    stackVersion: 8.11.4
+  - name: v2111
+    operatorVersion: 2.11.1
+    stackVersion: 8.12.2
+  - name: v2121
+    operatorVersion: 2.12.1
+    stackVersion: 8.13.2
+  - name: v2130
+    operatorVersion: 2.13.0
+    stackVersion: 8.14.3
+  - name: v2140
+    operatorVersion: 2.14.0
+    stackVersion: 8.15.0
   - name: upcoming
-    operatorVersion: 2.10.0-SNAPSHOT
-    stackVersion: 8.10.0-SNAPSHOT
+    operatorVersion: 2.15.0-SNAPSHOT
+    stackVersion: 8.16.0-SNAPSHOT

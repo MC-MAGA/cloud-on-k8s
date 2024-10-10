@@ -75,7 +75,7 @@ spec:
       - name: monitoring
         namespace: observability <1>
 ---
-apiVersion: logstash.k8s.elastic.co/v1beta1
+apiVersion: logstash.k8s.elastic.co/v1alpha1
 kind: Logstash
 metadata:
     name: monitored-sample
@@ -145,7 +145,7 @@ The referenced Secret must contain the following connection information:
 - `url`: the URL to reach the Elasticsearch cluster
 - `username`: the username of the user to be authenticated to the Elasticsearch cluster
 - `password`: the password of the user to be authenticated to the Elasticsearch cluster
-- `ca.crt`: the CA certificate in PEM format to secure communication to the Elasticsearch cluster (optional)
+- `ca.crt`: the contents of the CA certificate in PEM format to secure communication to the Elasticsearch cluster (optional)
 
 [source,yaml,subs="attributes,callouts"]
 ----

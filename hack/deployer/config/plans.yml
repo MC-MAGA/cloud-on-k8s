@@ -3,7 +3,7 @@ plans:
   operation: create
   clusterName: ci
   provider: gke
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.27
   machineType: n1-standard-8
   serviceAccount: true
   enforceSecurityPolicies: true
@@ -18,7 +18,7 @@ plans:
   operation: create
   clusterName: ci-autopilot
   provider: gke
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.27
   serviceAccount: true
   enforceSecurityPolicies: true
   # this is disabled in autopilot: container provisioner is privileged; not allowed in Autopilot
@@ -27,12 +27,11 @@ plans:
     autopilot: true
     region: us-central1
     gcpScopes: https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring,https://www.googleapis.com/auth/servicecontrol,https://www.googleapis.com/auth/service.management.readonly,https://www.googleapis.com/auth/trace.append
--
 - id: gke-dev
   operation: create
   clusterName: dev
   provider: gke
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.27
   machineType: n1-standard-8
   serviceAccount: false
   enforceSecurityPolicies: true
@@ -59,7 +58,7 @@ plans:
   operation: create
   clusterName: dev-autopilot
   provider: gke
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.27
   serviceAccount: false
   enforceSecurityPolicies: true
   gke:
@@ -70,7 +69,7 @@ plans:
   operation: create
   clusterName: ci
   provider: aks
-  kubernetesVersion: 1.26.0
+  kubernetesVersion: 1.29.2
   machineType: Standard_D8s_v3
   serviceAccount: true
   enforceSecurityPolicies: true
@@ -83,7 +82,7 @@ plans:
   operation: create
   clusterName: dev
   provider: aks
-  kubernetesVersion: 1.26.0
+  kubernetesVersion: 1.29.2
   machineType: Standard_D8s_v3
   serviceAccount: false
   enforceSecurityPolicies: true
@@ -94,7 +93,7 @@ plans:
 - id: ocp-ci
   operation: create
   clusterName: ci
-  clientVersion: 4.13.4
+  clientVersion: 4.17.0
   provider: ocp
   machineType: n1-standard-8
   serviceAccount: true
@@ -104,7 +103,7 @@ plans:
 - id: ocp-dev
   operation: create
   clusterName: dev
-  clientVersion: 4.13.4
+  clientVersion: 4.17.0
   provider: ocp
   machineType: n1-standard-8
   serviceAccount: true
@@ -118,7 +117,7 @@ plans:
   machineType: c5d.2xlarge
   serviceAccount: false
   enforceSecurityPolicies: true
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.29
   diskSetup: kubectl apply -f hack/deployer/config/local-disks/ssd-provisioner.yaml
   eks:
     region: ap-northeast-3
@@ -131,7 +130,7 @@ plans:
   machineType: m6gd.2xlarge
   serviceAccount: false
   enforceSecurityPolicies: true
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.29
   diskSetup: kubectl apply -f hack/deployer/config/local-disks/ssd-provisioner.yaml
   eks:
     region: eu-west-1
@@ -143,63 +142,31 @@ plans:
   provider: eks
   machineType: c5d.2xlarge
   serviceAccount: false
-  kubernetesVersion: 1.25
+  kubernetesVersion: 1.29
   enforceSecurityPolicies: true
   eks:
     region: eu-west-2
     nodeCount: 3
     nodeAMI: auto
-- id: e2e-monitor
-  operation: create
-  clusterName: e2e-monitor
-  provider: gke
-  kubernetesVersion: 1.15
-  machineType: n1-standard-8
-  serviceAccount: false
-  enforceSecurityPolicies: false
-  gke:
-    region: europe-west2
-    localSsdCount: 1
-    nodeCountPerZone: 1
-    gcpScopes: https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring,https://www.googleapis.com/auth/servicecontrol,https://www.googleapis.com/auth/service.management.readonly,https://www.googleapis.com/auth/trace.append
 - id: kind-dev
   operation: create
   clusterName: eck
-  clientVersion: 0.17.0
+  clientVersion: 0.23.0
   provider: kind
-  kubernetesVersion: 1.27.1
+  kubernetesVersion: 1.30.0
   enforceSecurityPolicies: true
   kind:
     nodeCount: 3
-    nodeImage: kindest/node:v1.27.1@sha256:c44686bf1f422942a21434e5b4070fc47f3c190305be2974f91444cd34909f1b
+    nodeImage: kindest/node:v1.30.0@sha256:047357ac0cfea04663786a612ba1eaba9702bef25227a794b52890dd8bcd692e
     ipFamily: ipv4
 - id: kind-ci
   operation: create
   clusterName: kind-ci
-  clientVersion: 0.17.0
+  clientVersion: 0.23.0
   provider: kind
-  kubernetesVersion: 1.27.1
+  kubernetesVersion: 1.30.0
   enforceSecurityPolicies: true
   kind:
     nodeCount: 3
-    nodeImage: kindest/node:v1.27.1@sha256:c44686bf1f422942a21434e5b4070fc47f3c190305be2974f91444cd34909f1b
+    nodeImage: kindest/node:v1.30.0@sha256:047357ac0cfea04663786a612ba1eaba9702bef25227a794b52890dd8bcd692e
     ipFamily: ipv4
-- id: tanzu-ci
-  operation: create
-  clusterName: tkg-ci
-  provider: tanzu
-  machineType: Standard_D8s_v3
-  diskSetup: kubectl apply -k hack/deployer/config/local-disks
-  tanzu:
-    location: eastus
-    nodeCount: 3
-    installerImage: cloudonk8s.azurecr.io/tanzu-ci:1.5.4
-- id: tanzu-dev
-  operation: create
-  clusterName: tkg-dev
-  provider: tanzu
-  machineType: Standard_D8s_v3
-  tanzu:
-    location: westeurope
-    nodeCount: 3
-    installerImage: cloudonk8s.azurecr.io/tanzu-ci:1.5.4

@@ -10,10 +10,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	lsv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/expectations"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/statefulset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/maps"
 )
@@ -25,6 +27,7 @@ type Params struct {
 	Selector             map[string]string
 	Labels               map[string]string
 	PodTemplateSpec      corev1.PodTemplateSpec
+	UpdateStrategy       appsv1.StatefulSetUpdateStrategy
 	VolumeClaimTemplates []corev1.PersistentVolumeClaim
 	Replicas             int32
 	RevisionHistoryLimit *int32
@@ -38,9 +41,7 @@ func New(params Params) appsv1.StatefulSet {
 			Labels:    params.Labels,
 		},
 		Spec: appsv1.StatefulSetSpec{
-			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
-				Type: appsv1.RollingUpdateStatefulSetStrategyType,
-			},
+			UpdateStrategy: params.UpdateStrategy,
 			// we don't care much about pods creation ordering, and manage deletion ordering ourselves,
 			// so we're fine with the StatefulSet controller spawning all pods in parallel
 			PodManagementPolicy:  appsv1.ParallelPodManagement,
@@ -64,13 +65,13 @@ func New(params Params) appsv1.StatefulSet {
 }
 
 // Reconcile creates or updates the expected StatefulSet.
-func Reconcile(ctx context.Context, c k8s.Client, expected appsv1.StatefulSet, owner client.Object) (appsv1.StatefulSet, error) {
+func Reconcile(ctx context.Context, c k8s.Client, expected appsv1.StatefulSet, ls lsv1alpha1.Logstash, expectations *expectations.Expectations) (appsv1.StatefulSet, error) {
 	var reconciled appsv1.StatefulSet
-
+	podTemplateValidator := statefulset.NewPodTemplateValidator(ctx, c, &ls, expected)
 	err := reconciler.ReconcileResource(reconciler.Params{
 		Context:    ctx,
 		Client:     c,
-		Owner:      owner,
+		Owner:      &ls,
 		Expected:   &expected,
 		Reconciled: &reconciled,
 		NeedsUpdate: func() bool {
@@ -87,6 +88,15 @@ func Reconcile(ctx context.Context, c k8s.Client, expected appsv1.StatefulSet, o
 			reconciled.Labels = maps.Merge(reconciled.Labels, expected.Labels)
 			reconciled.Annotations = maps.Merge(reconciled.Annotations, expected.Annotations)
 			reconciled.Spec = expected.Spec
+		},
+		PreCreate: podTemplateValidator,
+		PreUpdate: podTemplateValidator,
+		PostUpdate: func() {
+			if expectations != nil {
+				// expect the reconciled StatefulSet to be there in the cache for next reconciliations,
+				// to prevent assumptions based on the wrong replica count
+				expectations.ExpectGeneration(reconciled)
+			}
 		},
 	})
 	return reconciled, err

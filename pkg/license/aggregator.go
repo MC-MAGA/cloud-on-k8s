@@ -19,47 +19,50 @@ import (
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
 	entv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/enterprisesearch/v1"
 	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	lsv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/apmserver"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/nodespec"
 	essettings "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/enterprisesearch"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
 )
 
-// Aggregator aggregates the total of resources of all Elastic managed components
-type Aggregator struct {
+// aggregator aggregates the total of resources of all Elastic managed components
+type aggregator struct {
 	client k8s.Client
 }
 
-type aggregate func(ctx context.Context) (resource.Quantity, error)
+type aggregate func(ctx context.Context) (managedMemory, error)
 
-// AggregateMemory aggregates the total memory of all Elastic managed components
-func (a Aggregator) AggregateMemory(ctx context.Context) (resource.Quantity, error) {
-	var totalMemory resource.Quantity
+// aggregateMemory aggregates the total memory of all Elastic managed components
+func (a aggregator) aggregateMemory(ctx context.Context) (memoryUsage, error) {
+	usage := newMemoryUsage()
 
 	for _, f := range []aggregate{
 		a.aggregateElasticsearchMemory,
 		a.aggregateKibanaMemory,
 		a.aggregateApmServerMemory,
 		a.aggregateEnterpriseSearchMemory,
+		a.aggregateLogstashMemory,
 	} {
 		memory, err := f(ctx)
 		if err != nil {
-			return resource.Quantity{}, err
+			return memoryUsage{}, err
 		}
-		totalMemory.Add(memory)
+		usage.add(memory)
 	}
 
-	return totalMemory, nil
+	return usage, nil
 }
 
-func (a Aggregator) aggregateElasticsearchMemory(ctx context.Context) (resource.Quantity, error) {
+func (a aggregator) aggregateElasticsearchMemory(ctx context.Context) (managedMemory, error) {
 	var esList esv1.ElasticsearchList
 	err := a.client.List(context.Background(), &esList)
 	if err != nil {
-		return resource.Quantity{}, errors.Wrap(err, "failed to aggregate Elasticsearch memory")
+		return managedMemory{}, errors.Wrap(err, "failed to aggregate Elasticsearch memory")
 	}
 
 	var total resource.Quantity
@@ -72,7 +75,7 @@ func (a Aggregator) aggregateElasticsearchMemory(ctx context.Context) (resource.
 				nodespec.DefaultMemoryLimits,
 			)
 			if err != nil {
-				return resource.Quantity{}, errors.Wrap(err, "failed to aggregate Elasticsearch memory")
+				return managedMemory{}, errors.Wrap(err, "failed to aggregate Elasticsearch memory")
 			}
 
 			total.Add(multiply(mem, nodeSet.Count))
@@ -81,14 +84,14 @@ func (a Aggregator) aggregateElasticsearchMemory(ctx context.Context) (resource.
 		}
 	}
 
-	return total, nil
+	return managedMemory{total, elasticsearchKey}, nil
 }
 
-func (a Aggregator) aggregateEnterpriseSearchMemory(ctx context.Context) (resource.Quantity, error) {
+func (a aggregator) aggregateEnterpriseSearchMemory(ctx context.Context) (managedMemory, error) {
 	var entList entv1.EnterpriseSearchList
 	err := a.client.List(context.Background(), &entList)
 	if err != nil {
-		return resource.Quantity{}, errors.Wrap(err, "failed to aggregate Enterprise Search memory")
+		return managedMemory{}, errors.Wrap(err, "failed to aggregate Enterprise Search memory")
 	}
 
 	var total resource.Quantity
@@ -100,7 +103,7 @@ func (a Aggregator) aggregateEnterpriseSearchMemory(ctx context.Context) (resour
 			enterprisesearch.DefaultMemoryLimits,
 		)
 		if err != nil {
-			return resource.Quantity{}, errors.Wrap(err, "failed to aggregate Enterprise Search memory")
+			return managedMemory{}, errors.Wrap(err, "failed to aggregate Enterprise Search memory")
 		}
 
 		total.Add(multiply(mem, ent.Spec.Count))
@@ -108,14 +111,14 @@ func (a Aggregator) aggregateEnterpriseSearchMemory(ctx context.Context) (resour
 			"memory", mem.String(), "count", ent.Spec.Count)
 	}
 
-	return total, nil
+	return managedMemory{total, entSearchKey}, nil
 }
 
-func (a Aggregator) aggregateKibanaMemory(ctx context.Context) (resource.Quantity, error) {
+func (a aggregator) aggregateKibanaMemory(ctx context.Context) (managedMemory, error) {
 	var kbList kbv1.KibanaList
 	err := a.client.List(context.Background(), &kbList)
 	if err != nil {
-		return resource.Quantity{}, errors.Wrap(err, "failed to aggregate Kibana memory")
+		return managedMemory{}, errors.Wrap(err, "failed to aggregate Kibana memory")
 	}
 
 	var total resource.Quantity
@@ -127,7 +130,7 @@ func (a Aggregator) aggregateKibanaMemory(ctx context.Context) (resource.Quantit
 			kibana.DefaultMemoryLimits,
 		)
 		if err != nil {
-			return resource.Quantity{}, errors.Wrap(err, "failed to aggregate Kibana memory")
+			return managedMemory{}, errors.Wrap(err, "failed to aggregate Kibana memory")
 		}
 
 		total.Add(multiply(mem, kb.Spec.Count))
@@ -135,14 +138,41 @@ func (a Aggregator) aggregateKibanaMemory(ctx context.Context) (resource.Quantit
 			"memory", mem.String(), "count", kb.Spec.Count)
 	}
 
-	return total, nil
+	return managedMemory{total, kibanaKey}, nil
 }
 
-func (a Aggregator) aggregateApmServerMemory(ctx context.Context) (resource.Quantity, error) {
+func (a aggregator) aggregateLogstashMemory(ctx context.Context) (managedMemory, error) {
+	var lsList lsv1alpha1.LogstashList
+	err := a.client.List(context.Background(), &lsList)
+	if err != nil {
+		return managedMemory{}, errors.Wrap(err, "failed to aggregate Logstash memory")
+	}
+
+	var total resource.Quantity
+	for _, ls := range lsList.Items {
+		mem, err := containerMemLimits(
+			ls.Spec.PodTemplate.Spec.Containers,
+			lsv1alpha1.LogstashContainerName,
+			logstash.EnvJavaOpts, memFromJavaOpts,
+			logstash.DefaultMemoryLimit,
+		)
+		if err != nil {
+			return managedMemory{}, errors.Wrap(err, "failed to aggregate Logstash memory")
+		}
+
+		total.Add(multiply(mem, ls.Spec.Count))
+		ulog.FromContext(ctx).V(1).Info("Collecting", "namespace", ls.Namespace, "logstash_name", ls.Name,
+			"memory", mem.String(), "count", ls.Spec.Count)
+	}
+
+	return managedMemory{total, logstashKey}, nil
+}
+
+func (a aggregator) aggregateApmServerMemory(ctx context.Context) (managedMemory, error) {
 	var asList apmv1.ApmServerList
 	err := a.client.List(context.Background(), &asList)
 	if err != nil {
-		return resource.Quantity{}, errors.Wrap(err, "failed to aggregate APM Server memory")
+		return managedMemory{}, errors.Wrap(err, "failed to aggregate APM Server memory")
 	}
 
 	var total resource.Quantity
@@ -154,7 +184,7 @@ func (a Aggregator) aggregateApmServerMemory(ctx context.Context) (resource.Quan
 			apmserver.DefaultMemoryLimits,
 		)
 		if err != nil {
-			return resource.Quantity{}, errors.Wrap(err, "failed to aggregate APM Server memory")
+			return managedMemory{}, errors.Wrap(err, "failed to aggregate APM Server memory")
 		}
 
 		total.Add(multiply(mem, as.Spec.Count))
@@ -162,7 +192,7 @@ func (a Aggregator) aggregateApmServerMemory(ctx context.Context) (resource.Quan
 			"memory", mem.String(), "count", as.Spec.Count)
 	}
 
-	return total, nil
+	return managedMemory{total, apmKey}, nil
 }
 
 // containerMemLimits reads the container memory limits from the resource specification with fallback

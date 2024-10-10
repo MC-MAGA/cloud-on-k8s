@@ -14,8 +14,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/reconcile"
-	kibana2 "github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana"
+	kblabel "github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana/label"
 	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
 	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/kibana"
@@ -29,7 +30,7 @@ func TestVersionUpgradeToLatest7x(t *testing.T) {
 
 	name := "test-version-upgrade-to-7x"
 	esBuilder := elasticsearch.NewBuilder(name).
-		WithESMasterDataNodes(1, elasticsearch.DefaultResources).
+		WithESMasterDataNodes(minClusterSizeFromKibanaVersion(t, dstVersion), elasticsearch.DefaultResources).
 		WithVersion(dstVersion)
 
 	srcNodeCount := 3
@@ -47,21 +48,38 @@ func TestVersionUpgradeToLatest7x(t *testing.T) {
 	opts := []client.ListOption{
 		client.InNamespace(kbBuilder.Kibana.Namespace),
 		client.MatchingLabels(map[string]string{
-			commonv1.TypeLabelName:      kibana2.Type,
-			kibana2.KibanaNameLabelName: kbBuilder.Kibana.Name,
+			commonv1.TypeLabelName:      kblabel.Type,
+			kblabel.KibanaNameLabelName: kbBuilder.Kibana.Name,
 		}),
 	}
 
 	// perform a Kibana version upgrade and assert that:
-	// - there was a time were no Kibana pods were ready (when all old version pods were termintated,
+	// - there was a time when no Kibana pods were ready (when all old version pods were terminated,
 	//   but before new version pods were started), and
 	// - at all times all pods had the same Kibana version.
 	test.RunMutationsWhileWatching(
 		t,
 		[]test.Builder{esBuilder, kbBuilder},
 		[]test.Builder{esBuilder, kbBuilder.WithVersion(dstVersion).WithNodeCount(3).WithMutatedFrom(&kbBuilder)},
-		[]test.Watcher{NewReadinessWatcher(opts...), test.NewVersionWatcher(kibana2.KibanaVersionLabelName, opts...)},
+		[]test.Watcher{NewReadinessWatcher(opts...), test.NewVersionWatcher(kblabel.KibanaVersionLabelName, opts...)},
 	)
+}
+
+var (
+	noAutomaticIndexCreationKibanaVersion = version.MustParse("7.17.23")
+)
+
+// minClusterSizeFromKibanaVersion is a workaround for https://github.com/elastic/kibana/pull/158182
+func minClusterSizeFromKibanaVersion(t *testing.T, to string) int {
+	t.Helper()
+	dstVer, err := version.Parse(to)
+	if err != nil {
+		t.Fatalf("Failed to parse version '%s': %s", to, err)
+	}
+	if dstVer.LT(noAutomaticIndexCreationKibanaVersion) {
+		return 2
+	}
+	return 1
 }
 
 func TestVersionUpgradeAndRespecToLatest7x(t *testing.T) {
@@ -72,7 +90,7 @@ func TestVersionUpgradeAndRespecToLatest7x(t *testing.T) {
 
 	name := "test-upgrade-and-respec-to-7x"
 	esBuilder := elasticsearch.NewBuilder(name).
-		WithESMasterDataNodes(1, elasticsearch.DefaultResources).
+		WithESMasterDataNodes(minClusterSizeFromKibanaVersion(t, dstVersion), elasticsearch.DefaultResources).
 		WithVersion(dstVersion)
 
 	srcNodeCount := 3
@@ -96,8 +114,8 @@ func TestVersionUpgradeAndRespecToLatest7x(t *testing.T) {
 	opts := []client.ListOption{
 		client.InNamespace(kbBuilder1.Kibana.Namespace),
 		client.MatchingLabels(map[string]string{
-			commonv1.TypeLabelName:      kibana2.Type,
-			kibana2.KibanaNameLabelName: kbBuilder1.Kibana.Name,
+			commonv1.TypeLabelName:      kblabel.Type,
+			kblabel.KibanaNameLabelName: kbBuilder1.Kibana.Name,
 		}),
 	}
 
@@ -130,7 +148,7 @@ func TestVersionUpgradeAndRespecToLatest7x(t *testing.T) {
 		t,
 		[]test.Builder{esBuilder, kbBuilder1},
 		[]test.Builder{esBuilder, kbBuilder2, kbBuilder3},
-		[]test.Watcher{w, test.NewVersionWatcher(kibana2.KibanaVersionLabelName, opts...)},
+		[]test.Watcher{w, test.NewVersionWatcher(kblabel.KibanaVersionLabelName, opts...)},
 	)
 }
 
@@ -154,8 +172,8 @@ func TestVersionUpgradeToLatest8x(t *testing.T) {
 	opts := []client.ListOption{
 		client.InNamespace(kbBuilder.Kibana.Namespace),
 		client.MatchingLabels(map[string]string{
-			commonv1.TypeLabelName:      kibana2.Type,
-			kibana2.KibanaNameLabelName: kbBuilder.Kibana.Name,
+			commonv1.TypeLabelName:      kblabel.Type,
+			kblabel.KibanaNameLabelName: kbBuilder.Kibana.Name,
 		}),
 	}
 
@@ -170,25 +188,24 @@ func TestVersionUpgradeToLatest8x(t *testing.T) {
 			esBuilder.WithVersion(dstVersion).WithMutatedFrom(&esBuilder),
 			kbBuilder.WithVersion(dstVersion).WithMutatedFrom(&kbBuilder),
 		},
-		[]test.Watcher{NewReadinessWatcher(opts...), test.NewVersionWatcher(kibana2.KibanaVersionLabelName, opts...)},
+		[]test.Watcher{NewReadinessWatcher(opts...), test.NewVersionWatcher(kblabel.KibanaVersionLabelName, opts...)},
 	)
 }
 
 func TestVersionUpgradeAndRespecToLatest8x(t *testing.T) {
-	// Skip for 8.10.0-SNAPSHOT because after a few seconds, ES is yellow because of unassigned
-	// fleet-files-agent-000001 and fleet-file-data-agent-000001 shards.
-	// TODO: remove once https://github.com/elastic/cloud-on-k8s/issues/7013 is resolved
-	if test.Ctx().ElasticStackVersion == "8.10.0-SNAPSHOT" {
-		t.SkipNow()
-	}
-
 	srcVersion, dstVersion := test.GetUpgradePathTo8x(test.Ctx().ElasticStackVersion)
 
 	test.SkipInvalidUpgrade(t, srcVersion, dstVersion)
 
 	name := "test-upgrade-and-respec-to-8x"
+	esNodes := 1
+	// https://github.com/elastic/cloud-on-k8s/issues/7013
+	// Between 8.7 and 8.9 fleet indices are set with a replica which fails with a single node. In 8.10 indices were moved to datastreams.
+	if version.MustParse(test.Ctx().ElasticStackVersion).GTE(version.MinFor(8, 7, 0)) && version.MustParse(test.Ctx().ElasticStackVersion).LT(version.MinFor(8, 10, 0)) {
+		esNodes = 2
+	}
 	esBuilder := elasticsearch.NewBuilder(name).
-		WithESMasterDataNodes(1, elasticsearch.DefaultResources).
+		WithESMasterDataNodes(esNodes, elasticsearch.DefaultResources).
 		WithVersion(dstVersion)
 
 	srcNodeCount := 3
@@ -207,8 +224,8 @@ func TestVersionUpgradeAndRespecToLatest8x(t *testing.T) {
 	opts := []client.ListOption{
 		client.InNamespace(kbBuilder1.Kibana.Namespace),
 		client.MatchingLabels(map[string]string{
-			commonv1.TypeLabelName:      kibana2.Type,
-			kibana2.KibanaNameLabelName: kbBuilder1.Kibana.Name,
+			commonv1.TypeLabelName:      kblabel.Type,
+			kblabel.KibanaNameLabelName: kbBuilder1.Kibana.Name,
 		}),
 	}
 
@@ -241,7 +258,7 @@ func TestVersionUpgradeAndRespecToLatest8x(t *testing.T) {
 		t,
 		[]test.Builder{esBuilder, kbBuilder1},
 		[]test.Builder{esBuilder, kbBuilder2, kbBuilder3},
-		[]test.Watcher{w, test.NewVersionWatcher(kibana2.KibanaVersionLabelName, opts...)},
+		[]test.Watcher{w, test.NewVersionWatcher(kblabel.KibanaVersionLabelName, opts...)},
 	)
 }
 

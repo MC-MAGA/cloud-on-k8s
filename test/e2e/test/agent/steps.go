@@ -85,12 +85,37 @@ func (b Builder) InitTestSteps(k *test.K8sClient) test.StepList {
 }
 
 func (b Builder) CreationTestSteps(k *test.K8sClient) test.StepList {
-	//nolint:thelper
+	// increase the test timeout for autopilot clusters because autoscaling k8s nodes time can increase the time
+	// before the elasticsearch container is ready
+	timeout := test.Ctx().TestTimeout
+	if test.Ctx().AutopilotCluster {
+		timeout *= 2
+	}
 	return test.StepList{}.
 		WithSteps(test.StepList{
 			test.Step{
+				// This is to improve test stability see https://github.com/elastic/cloud-on-k8s/issues/7172
+				Name: "Wait for Elasticsearch to be green",
+				Test: test.UntilSuccess(func() error {
+					for _, ref := range b.Agent.Spec.ElasticsearchRefs {
+						var es esv1.Elasticsearch
+						if err := k.Client.Get(context.Background(), ref.WithDefaultNamespace(b.Agent.Namespace).NamespacedName(), &es); err != nil {
+							return err
+						}
+						if es.Status.Health != esv1.ElasticsearchGreenHealth {
+							return fmt.Errorf("health is not green but %s", es.Status.Health)
+						}
+					}
+					return nil
+				}, timeout),
+				Skip: func() bool {
+					return len(b.Agent.Spec.ElasticsearchRefs) == 0
+				},
+			},
+			test.Step{
 				Name: "Creating an Agent should succeed",
 				Test: func(t *testing.T) {
+					t.Helper()
 					for _, obj := range b.RuntimeObjects() {
 						err := k.Client.Create(context.Background(), obj)
 						require.NoError(t, err)
@@ -100,6 +125,7 @@ func (b Builder) CreationTestSteps(k *test.K8sClient) test.StepList {
 			test.Step{
 				Name: "Agent should be created",
 				Test: func(t *testing.T) {
+					t.Helper()
 					var createdAgent agentv1alpha1.Agent
 					err := k.Client.Get(context.Background(), k8s.ExtractNamespacedName(&b.Agent), &createdAgent)
 					require.NoError(t, err)
@@ -128,11 +154,17 @@ func (b Builder) CheckK8sTestSteps(k *test.K8sClient) test.StepList {
 					Version: b.Agent.Spec.Version,
 					Health:  "green",
 				}
-				if b.Agent.Spec.Deployment != nil {
+
+				switch {
+				case b.Agent.Spec.Deployment != nil:
 					expectedReplicas := pointer.Int32OrDefault(b.Agent.Spec.Deployment.Replicas, int32(1))
 					expected.ExpectedNodes = expectedReplicas
 					expected.AvailableNodes = expectedReplicas
-				} else {
+				case b.Agent.Spec.StatefulSet != nil:
+					expectedReplicas := pointer.Int32OrDefault(b.Agent.Spec.StatefulSet.Replicas, int32(1))
+					expected.ExpectedNodes = expectedReplicas
+					expected.AvailableNodes = expectedReplicas
+				default:
 					// don't check the replicas count for daemonsets
 					agent.Status.ExpectedNodes = 0
 					agent.Status.AvailableNodes = 0

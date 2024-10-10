@@ -10,7 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	beatv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/beat/v1beta1"
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
@@ -20,6 +20,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/reconciler"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/stackmon/monitoring"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/maps"
 )
@@ -131,7 +132,7 @@ func buildPodTemplate(
 	}
 
 	if keystoreResources != nil {
-		_, _ = configHash.Write([]byte(keystoreResources.Version))
+		_, _ = configHash.Write([]byte(keystoreResources.Hash))
 		volumes = append(volumes, keystoreResources.Volume)
 		initContainers = append(initContainers, keystoreResources.InitContainer)
 	}
@@ -156,7 +157,7 @@ func buildPodTemplate(
 		volumes = append(volumes, sideCar.Volumes...)
 		if runningAsRoot(params.Beat) {
 			sideCar.Container.SecurityContext = &corev1.SecurityContext{
-				RunAsUser: pointer.Int64(0),
+				RunAsUser: ptr.To[int64](0),
 			}
 		}
 		sideCars = append(sideCars, sideCar.Container)
@@ -182,7 +183,7 @@ func buildPodTemplate(
 		volumes = append(volumes, sideCar.Volumes...)
 		if runningAsRoot(params.Beat) {
 			sideCar.Container.SecurityContext = &corev1.SecurityContext{
-				RunAsUser: pointer.Int64(0),
+				RunAsUser: ptr.To[int64](0),
 			}
 		}
 		sideCars = append(sideCars, sideCar.Container)
@@ -195,11 +196,16 @@ func buildPodTemplate(
 		ConfigHashAnnotationName: fmt.Sprint(configHash.Sum32()),
 	}
 
+	v, err := version.Parse(spec.Version)
+	if err != nil {
+		return corev1.PodTemplateSpec{}, err // error unlikely and should have been caught during validation
+	}
+
 	builder := defaults.NewPodTemplateBuilder(podTemplate, spec.Type).
 		WithLabels(labels).
 		WithAnnotations(annotations).
 		WithResources(defaultResources).
-		WithDockerImage(spec.Image, container.ImageRepository(defaultImage, spec.Version)).
+		WithDockerImage(spec.Image, container.ImageRepository(defaultImage, v)).
 		WithVolumes(volumes...).
 		WithVolumeMounts(volumeMounts...).
 		WithInitContainers(initContainers...).

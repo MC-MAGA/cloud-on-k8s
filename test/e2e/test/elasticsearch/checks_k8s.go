@@ -21,10 +21,11 @@ import (
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
+	sset "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/statefulset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/bootstrap"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/certificates/transport"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
+	es_sset "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
@@ -127,7 +128,7 @@ func CheckSecrets(b Builder, k *test.K8sClient) test.Step {
 			},
 			{
 				Name: esName + "-es-internal-users",
-				Keys: []string{"elastic-internal", "elastic-internal-monitoring", "elastic-internal-pre-stop", "elastic-internal-probe"},
+				Keys: []string{"elastic-internal", "elastic-internal-monitoring", "elastic-internal-diagnostics", "elastic-internal-pre-stop", "elastic-internal-probe"},
 				Labels: map[string]string{
 					"common.k8s.elastic.co/type":                "elasticsearch",
 					"eck.k8s.elastic.co/credentials":            "true",
@@ -214,7 +215,7 @@ func CheckPodCertificates(b Builder, k *test.K8sClient) test.Step {
 				if !exist {
 					return fmt.Errorf("label %s not found on pod %s/%s", label.StatefulSetNameLabelName, pod.Namespace, pod.Name)
 				}
-				_, _, err := getTransportCert(k, b.Elasticsearch.Namespace, b.Elasticsearch.Name, statefulSet, pod.Name)
+				_, _, err := getTransportCert(k, b.Elasticsearch.Namespace, statefulSet, pod.Name)
 				if err != nil {
 					return err
 				}
@@ -225,7 +226,7 @@ func CheckPodCertificates(b Builder, k *test.K8sClient) test.Step {
 }
 
 // getTransportCert retrieves the certificate of the CA and the transport certificate
-func getTransportCert(k *test.K8sClient, esNamespace, esName, statefulSetName, podName string) (caCert, transportCert []*x509.Certificate, err error) {
+func getTransportCert(k *test.K8sClient, esNamespace, statefulSetName, podName string) (caCert, transportCert []*x509.Certificate, err error) {
 	var secret corev1.Secret
 	key := types.NamespacedName{
 		Namespace: esNamespace,
@@ -481,7 +482,7 @@ func checkExpectedPodsReady(b Builder, k *test.K8sClient) error {
 		}
 		// the exact expected list of Pods (no more, no less) should exist
 		expectedPodNames := sset.PodNames(statefulSet)
-		actualPods, err := sset.GetActualPodsForStatefulSet(k.Client, k8s.ExtractNamespacedName(&statefulSet))
+		actualPods, err := es_sset.GetActualPodsForStatefulSet(k.Client, k8s.ExtractNamespacedName(&statefulSet))
 		if err != nil {
 			return err
 		}
@@ -544,7 +545,7 @@ func AnnotatePodsWithBuilderHash(b Builder, k *test.K8sClient) []test.Step {
 			Test: test.Eventually(func() error {
 				es := b.Elasticsearch
 				for _, nodeSet := range b.Elasticsearch.Spec.NodeSets {
-					pods, err := sset.GetActualPodsForStatefulSet(k.Client, types.NamespacedName{
+					pods, err := es_sset.GetActualPodsForStatefulSet(k.Client, types.NamespacedName{
 						Namespace: es.Namespace,
 						Name:      esv1.StatefulSet(es.Name, nodeSet.Name),
 					})

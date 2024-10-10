@@ -175,6 +175,9 @@ type Association interface {
 	AssociationConf() (*AssociationConf, error)
 	SetAssociationConf(*AssociationConf)
 
+	// SupportsAuthAPIKey returns true if the Association supports authenticating with an API key
+	SupportsAuthAPIKey() bool
+
 	// AssociationID uniquely identifies this Association among all Associations of the same type belonging to Associated()
 	AssociationID() string
 }
@@ -201,13 +204,19 @@ func FormatNameWithID(template string, id string) string {
 type AssociationConf struct {
 	AuthSecretName   string `json:"authSecretName"`
 	AuthSecretKey    string `json:"authSecretKey"`
+	IsAPIKey         bool   `json:"isApiKey"`
 	IsServiceAccount bool   `json:"isServiceAccount"`
 	CACertProvided   bool   `json:"caCertProvided"`
 	CASecretName     string `json:"caSecretName"`
-	URL              string `json:"url"`
+	// AdditionalSecretsHash is a hash of additional secrets such that when any of the underlying
+	// secrets change, the CRD annotation is updated and the pods are restarted.
+	AdditionalSecretsHash string `json:"additionalSecretsHash,omitempty"`
+	URL                   string `json:"url"`
 	// Version of the referenced resource. If a version upgrade is in progress,
 	// matches the lowest running version. May be empty if unknown.
 	Version string `json:"version"`
+	// Serverless is true when the referenced resource is a serverless project.
+	Serverless bool `json:"serverless,omitempty"`
 }
 
 // IsConfigured returns true if all the fields are set.
@@ -285,13 +294,6 @@ func (ac *AssociationConf) GetURL() string {
 		return ""
 	}
 	return ac.URL
-}
-
-func (ac *AssociationConf) GetVersion() string {
-	if ac == nil {
-		return ""
-	}
-	return ac.Version
 }
 
 func ElasticsearchConfigAnnotationName(o ObjectSelector) string {
